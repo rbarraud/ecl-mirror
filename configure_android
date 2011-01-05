@@ -1,0 +1,56 @@
+#!/bin/bash
+
+export ANDROID_ROOT=/home/sylvain/src/android/android-ndk-r5
+SYSROOT=$ANDROID_ROOT/platforms/android-9/arch-arm
+
+export CC="$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-gcc --sysroot=$SYSROOT"
+export CXX="$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-g++ --sysroot=$SYSROOT"
+#export LD="$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-ld --sysroot=$SYSROOT"
+export AR=$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-ar
+export STRIP=$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-strip
+export RANLIB=$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-ranlib
+export CPPFLAGS="-I$ANDROID_ROOT/platforms/android-9/arch-arm/usr/include/"
+
+enable_threads=yes
+
+host_config_opts="\
+	--disable-longdouble \
+	--enable-unicode \
+	--enable-threads=$enable_threads \
+	--with-asdf=yes \
+	--with-bytecmp=builtin \
+	--with-cmp=builtin \
+	--with-clx=no \
+	--with-debug-cflags=no \
+	--with-defsystem=no \
+	--with-fpe=yes \
+	--with-profile=no \
+	--with-rt=no \
+	--with-serve-event=yes \
+	--with-tcp=yes \
+	--with-x=no \
+	--with-dffi=no"
+base_config_opts="\
+	--disable-c99complex \
+	--disable-longdouble \
+	--disable-soname \
+    	--disable-shared \
+	--enable-unicode \
+	--enable-threads=$enable_threads \
+	--with-asdf=no \
+	--with-bytecmp=builtin \
+	--with-cmp=no \
+	--with-clx=no \
+	--with-debug-cflags=no \
+	--with-defsystem=no \
+	--with-fpe=yes \
+	--with-profile=no \
+	--with-rt=no \
+	--with-serve-event=builtin \
+	--with-tcp=builtin \
+	--with-x=no \
+	--with-dffi=no"
+
+
+#./configure --host=arm-eabi $base_config_opts $*
+./configure --host=arm-eabi --disable-shared --disable-soname --with-asdf=no --enable-threads=no $*

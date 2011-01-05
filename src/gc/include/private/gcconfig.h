@@ -2106,6 +2106,11 @@
 #   define PCR_VDB
 # endif
 
+# if defined(__ANDROID__) || defined(ANDROID)
+#   undef DYNAMIC_LOADING
+#   define NO_GETCONTEXT
+# endif
+
 # ifdef SMALL_CONFIG
 	/* Presumably not worth the space it takes. */
 #   undef PROC_VDB
