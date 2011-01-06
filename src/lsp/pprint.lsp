@@ -12,7 +12,7 @@
 
 (in-package "SI")
 
-(declaim (optimize (safety 1)))
+(declaim #.+ecl-unsafe-declarations+)
 
 ;;;; Pretty streams
 
@@ -357,7 +357,8 @@
 (defun start-logical-block (stream prefix per-line-p suffix)
   (declare (si::c-local)
 	   (type string prefix suffix)
-	   (type pretty-stream stream))
+	   (type pretty-stream stream)
+	   (ext:check-arguments-type))
   (let ((prefix-len (length prefix)))
     (when (plusp prefix-len)
       (pretty-sout stream prefix 0 prefix-len))
@@ -860,6 +861,7 @@
   "Group some output into a logical block.  STREAM-SYMBOL should be either a
    stream, T (for *TERMINAL-IO*), or NIL (for *STANDARD-OUTPUT*).  The printer
    control variable *PRINT-LEVEL* is automatically handled."
+  (declare #.+ecl-safe-declarations+)
   (when per-line-prefix-p
     (when prefix-p
       (error "Cannot specify both a prefix and a per-line-prefix."))
@@ -896,6 +898,7 @@
    if it's list argument is exhausted.  Can only be used inside
    PPRINT-LOGICAL-BLOCK, and only when the LIST argument to
    PPRINT-LOGICAL-BLOCK is supplied."
+  (declare #.+ecl-safe-declarations+)
   (error "PPRINT-EXIT-IF-LIST-EXHAUSTED must be lexically inside ~
 	  PPRINT-LOGICAL-BLOCK."))
 
@@ -905,6 +908,7 @@
    and *PRINT-CIRCLE*.  Can only be used inside PPRINT-LOGICAL-BLOCK.
    If the LIST argument to PPRINT-LOGICAL-BLOCK was NIL, then nothing
    is poped, but the *PRINT-LENGTH* testing still happens."
+  (declare #.+ecl-safe-declarations+)
   (error "PPRINT-POP must be lexically inside PPRINT-LOGICAL-BLOCK."))
 
 (defun pprint-newline (kind &optional stream)
@@ -928,7 +932,9 @@
    next line.  (See PPRINT-INDENT.)"
   (declare (type (member :linear :miser :fill :mandatory) kind)
 	   (type (or stream (member t nil)) stream)
-	   (values null))
+	   (values null)
+	   (ext:check-arguments-type)
+	   #.+ecl-safe-declarations+)
   (let ((stream (case stream
 		  ((t) *terminal-io*)
 		  ((nil) *standard-output*)
@@ -950,7 +956,9 @@
   (declare (type (member :block :current) relative-to)
 	   (type real n)
 	   (type (or stream (member t nil)) stream)
-	   (values null))
+	   (values null)
+	   (ext:check-arguments-type)
+	   #.+ecl-safe-declarations+)
   (let ((stream (case stream
 		  ((t) *terminal-io*)
 		  ((nil) *standard-output*)
@@ -974,7 +982,9 @@
   (declare (type (member :line :section :line-relative :section-relative) kind)
 	   (type unsigned-byte colnum colinc)
 	   (type (or stream (member t nil)) stream)
-	   (values null))
+	   (values null)
+	   (ext:check-arguments-type)
+	   #.+ecl-safe-declarations+)
   (let ((stream (case stream
 		  ((t) *terminal-io*)
 		  ((nil) *standard-output*)
@@ -988,7 +998,10 @@
    element.  If COLON? is NIL (defaults to T), then no parens are printed
    around the output.  ATSIGN? is ignored (but allowed so that PPRINT-FILL
    can be used with the ~/.../ format directive."
-  (declare (ignore atsign?))
+  (declare (ignore atsign?)
+           (type (or stream (member t nil)) stream)
+	   (ext:check-arguments-type)
+	   #.+ecl-safe-declarations+)
   (pprint-logical-block (stream list
 				:prefix (if colon? "(" "")
 				:suffix (if colon? ")" ""))
@@ -1004,7 +1017,10 @@
    element.  If COLON? is NIL (defaults to T), then no parens are printed
    around the output.  ATSIGN? is ignored (but allowed so that PPRINT-LINEAR
    can be used with the ~/.../ format directive."
-  (declare (ignore atsign?))
+  (declare (ignore atsign?)
+           (type (or stream (member t nil)) stream)
+	   (ext:check-arguments-type)
+	   #.+ecl-safe-declarations+)
   (pprint-logical-block (stream list
 				:prefix (if colon? "(" "")
 				:suffix (if colon? ")" ""))
@@ -1015,14 +1031,17 @@
       (write-char #\space stream)
       (pprint-newline :linear stream))))
 
-(defun pprint-tabular (stream list &optional (colon? t) atsign? tabsize)
+(defun pprint-tabular (stream list &optional (colon? t) atsign? (tabsize 16))
   "Output LIST to STREAM tabbing to the next column that is an even multiple
    of TABSIZE (which defaults to 16) between each element.  :FILL style
    conditional newlines are also output between each element.  If COLON? is
    NIL (defaults to T), then no parens are printed around the output.
    ATSIGN? is ignored (but allowed so that PPRINT-TABULAR can be used with
    the ~/.../ format directive."
-  (declare (ignore atsign?))
+  (declare (ignore atsign?)
+           (type (or stream (member t nil)) stream)
+	   (ext:check-arguments-type)
+	   #.+ecl-safe-declarations+)
   (pprint-logical-block (stream list
 				:prefix (if colon? "(" "")
 				:suffix (if colon? ")" ""))
@@ -1107,9 +1126,9 @@
 
 
 (defun copy-pprint-dispatch (&optional (table *print-pprint-dispatch*))
-  (declare (type (or pprint-dispatch-table null) table))
+  (declare (type (or pprint-dispatch-table null) table)
+	   #.+ecl-safe-declarations+)
   (let* ((orig (or table *initial-pprint-dispatch*)))
-    (check-type orig pprint-dispatch-table)
     (let* ((new (make-pprint-dispatch-table
 		 :entries (copy-list (pprint-dispatch-table-entries orig))))
 	   (new-cons-entries (pprint-dispatch-table-cons-entries new)))
@@ -1122,7 +1141,9 @@
   (write-ugly-object object stream))
 
 (defun pprint-dispatch (object &optional (table *print-pprint-dispatch*))
-  (declare (type (or pprint-dispatch-table null) table))
+  (declare (type (or pprint-dispatch-table null) table)
+	   (ext:check-arguments-type)
+	   #.+ecl-safe-declarations+)
   (let* ((table (or table *initial-pprint-dispatch*))
 	 (cons-entry
 	  (and (consp object)
@@ -1141,9 +1162,11 @@
 
 (defun set-pprint-dispatch (type function &optional
 			    (priority 0) (table *print-pprint-dispatch*))
-  (declare (type (or null function symbol) function)
+  (declare (type t type)
+           (type (or null function symbol) function)
 	   (type real priority)
-	   (type pprint-dispatch-table table))
+	   (type pprint-dispatch-table table)
+	   #.+ecl-safe-declarations+)
   ;; FIXME! This check should be automatically generated when compiling
   ;; with high enough safety mode.
   (unless (typep priority 'real)

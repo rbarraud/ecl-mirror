@@ -49,9 +49,8 @@
 (defun c1unwind-protect (args)
   (check-args-number 'UNWIND-PROTECT args 1)
   (incf *setjmps*)
-  (let (form)
-    (let ((*cmp-env* (cmp-env-mark 'UNWIND-PROTECT)))
-      (setq form (c1expr (first args))))
+  (let ((form (let ((*cmp-env* (cmp-env-mark 'UNWIND-PROTECT)))
+                (c1expr (first args)))))
     (make-c1form* 'UNWIND-PROTECT :type (c1form-type form) :sp-change t
 		  :args form (c1progn (rest args)))))
 
@@ -98,12 +97,3 @@
        (let ((*destination* loc)) (c2expr* tag))))
   (let ((*destination* 'VALUES)) (c2expr* val))
   (wt-nl "cl_throw(" loc ");"))
-
-;;; ----------------------------------------------------------------------
-
-(put-sysprop 'CATCH 'C1SPECIAL 'c1catch)
-(put-sysprop 'CATCH 'C2 'c2catch)
-(put-sysprop 'UNWIND-PROTECT 'C1SPECIAL 'c1unwind-protect)
-(put-sysprop 'UNWIND-PROTECT 'C2 'c2unwind-protect)
-(put-sysprop 'THROW 'C1SPECIAL 'c1throw)
-(put-sysprop 'THROW 'C2 'c2throw)

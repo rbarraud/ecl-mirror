@@ -265,6 +265,9 @@ enum ecl_built_in_classes {
 #ifdef ECL_SEMAPHORES
         , ECL_BUILTIN_SEMAPHORE
 #endif
+#ifdef ECL_SSE2
+	, ECL_BUILTIN_SSE_PACK
+#endif
 };
 
 cl_object
@@ -281,9 +284,6 @@ cl_class_of(cl_object x)
 		index = ECL_BUILTIN_INTEGER; break;
 	case t_ratio:
 		index = ECL_BUILTIN_RATIO; break;
-#ifdef ECL_SHORT_FLOAT
-	case t_shortfloat:
-#endif
 	case t_singlefloat:
 	case t_doublefloat:
 #ifdef ECL_LONG_FLOAT
@@ -366,6 +366,10 @@ cl_class_of(cl_object x)
 		index = ECL_BUILTIN_FRAME; break;
 	case t_weak_pointer:
 		index = ECL_BUILTIN_WEAK_POINTER; break;
+#ifdef ECL_SSE2
+	case t_sse_pack:
+		index = ECL_BUILTIN_SSE_PACK; break;
+#endif
 	default:
 		ecl_internal_error("not a lisp data object");
 	}

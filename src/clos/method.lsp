@@ -164,7 +164,11 @@
 			    in-closure-p t))))))
 	     form))
       (let ((si::*code-walker* #'code-walker))
-	(coerce method-lambda 'function)))
+	;; Instead of (coerce method-lambda 'function) we use
+        ;; explicitely the bytecodes compiler with an environment, no
+        ;; stepping, compiler-env-p = t and execute = nil, so that the
+        ;; form does not get executed.
+        (si::eval-with-env method-lambda env nil t t)))
     (values call-next-method-p
 	    next-method-p-p
 	    in-closure-p)))
@@ -263,6 +267,16 @@ have disappeared."
 ;;; ----------------------------------------------------------------------
 ;;;                                                             operations
 
+(defun add-method-keywords (method)
+  (multiple-value-bind (reqs opts rest key-flag keywords allow-other-keys)
+      (si::process-lambda-list (method-lambda-list method) t)
+    (setf (method-keywords method)
+          (if allow-other-keys
+              't
+              (loop for k in (rest keywords) by #'cddddr
+                 collect k)))
+    method))
+
 (defun make-method (method-class qualifiers specializers lambda-list
 				 fun plist options)
   (declare (ignore options))
@@ -276,7 +290,7 @@ have disappeared."
 	  (method-specializers method) specializers
 	  (method-qualifiers method) qualifiers
 	  (method-plist method) plist)
-    method))
+    (add-method-keywords method)))
 
 ;;; early version used during bootstrap
 (defun method-p (x)
@@ -300,6 +314,8 @@ have disappeared."
       (setf (generic-function-argument-precedence-order gf)
 	    (rest (si::process-lambda-list (method-lambda-list method) t))))
     (compute-g-f-spec-list gf)
+    (dolist (d (generic-function-dependents gf))
+      (update-dependent gf d 'add-method method))
     method))
 
 (defun find-method (gf qualifiers specializers &optional (errorp t))

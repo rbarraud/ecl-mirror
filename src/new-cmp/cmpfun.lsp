@@ -128,32 +128,9 @@ The function thus belongs to the type of functions that ecl_make_cfun accepts."
              "FEwrong_type_nth_arg(#0,#1,#2,#3);" :one-liner nil))
 
 (define-compiler-macro rplaca (&whole form cons value &environment env)
-  (if (policy-open-code-accessors env)
+  (if (policy-inline-accessors env)
       (expand-rplaca/d (eq (first form) 'rplaca) cons value env)
       form))
-
-(defconstant +member-expansions+
-  '(('EQ . #1="si_memq(#0,#1)")
-    (#'EQ . #1#)
-    ('#'EQ . #1#)
-    ('EQL . #2="ecl_memql(#0,#1)")
-    (#'EQL . #2#)
-    ('#'EQL . #2#)
-    ('EQUAL . #3="ecl_member(#0,#1)")
-    (#'EQUAL . #3#)
-    ('#'EQUAL . #3#)))
-
-(define-compiler-macro member (&whole form value list &rest extra &environment env)
-  (unless extra
-    (setf extra '(:test 'EQL)))
-  (when (and (= (length extra) 2)
-             (eq (first extra) :test))
-    (let ((test (assoc (second extra)
-                       +member-expansions+ :test #'equal)))
-      (when test
-        (setf form `(C-INLINE (,value ,list) (:object :object) :object
-                              ,(cdr test) :one-liner t :side-effects nil)))))
-  form)
 
 (defconstant +assoc-expansions+
   '(('EQ . #1="ecl_assq(#0,#1)")
@@ -182,7 +159,7 @@ The function thus belongs to the type of functions that ecl_make_cfun accepts."
   form)
 
 (define-compiler-macro nth (&whole form which cons &environment env)
-  (if (and (policy-open-code-accessors env) (numberp which) (<= 0 which 7))
+  (if (and (policy-inline-accessors env) (numberp which) (<= 0 which 7))
       (case which
         (0 (list 'CAR cons))
         (1 (list 'CADR cons))
@@ -195,7 +172,7 @@ The function thus belongs to the type of functions that ecl_make_cfun accepts."
       form))
 
 (define-compiler-macro nthcdr (&whole form which cons &environment env)
-  (if (and (policy-open-code-accessors env) (numberp which) (<= 0 which 7))
+  (if (and (policy-inline-accessors env) (numberp which) (<= 0 which 7))
       (case which
         (0 cons)
         (1 (list 'CDR cons))

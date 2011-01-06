@@ -20,8 +20,7 @@
 ;;;
 (defun get-slot-type (name index)
   ;; default is t
-  (type-filter
-   (or (third (nth index (get-sysprop name 'SYS::STRUCTURE-SLOT-DESCRIPTIONS))) 'T)))
+  (or (third (nth index (get-sysprop name 'SYS::STRUCTURE-SLOT-DESCRIPTIONS))) 'T))
 
 ;;;
 ;;; STRUCTURE SLOT READING
@@ -75,7 +74,7 @@
 	  (make-c1form* 'SYS:STRUCTURE-REF :type type
 			:args c-form (add-symbol name) index
 			(if (or (subtypep (c1form-type c-form) structure-type)
-				(not (policy-check-all-arguments-p)))
+				(policy-assume-no-errors))
 			    :unsafe
 			    nil)))
 	(c1call-global 'sys:structure-ref args))))
@@ -143,9 +142,3 @@
         (wt-nl "(" x ")->str.self[" index "]= " y ";"))
     (unwind-exit y)
     (close-inline-blocks)))
-
-(put-sysprop 'SYS:STRUCTURE-REF 'C1 'c1structure-ref)
-(put-sysprop 'SYS:STRUCTURE-REF 'C2 'c2structure-ref)
-(put-sysprop 'SYS:STRUCTURE-REF 'WT-LOC 'wt-structure-ref)
-(put-sysprop 'SYS:STRUCTURE-SET 'C1 'c1structure-set)
-(put-sysprop 'SYS:STRUCTURE-SET 'C2 'c2structure-set)

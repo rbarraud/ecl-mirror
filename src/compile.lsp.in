@@ -71,7 +71,7 @@
 ;;; * Compile and link Common-Lisp base library
 ;;;
 (setq si::*keep-documentation* nil)
-(proclaim '(optimize (safety 2) (space 3)))
+(mapc #'proclaim +ecl-optimization-settings+)
 (let* ((c::*cc-flags* (concatenate 'string "-DECL_API -I\"@true_builddir@/c\" " c::*cc-flags*))
        (lsp-objects (compile-if-old "build:lsp;" +lisp-module-files+
 				    :system-p t :c-file t :data-file t :h-file t
@@ -79,7 +79,7 @@
 				    )))
   #+CLOS
   (let* ((c::*compile-to-linking-call* nil))
-    (proclaim '(optimize (safety 2) (space 3)))
+   (mapc #'proclaim +ecl-optimization-settings+)
     (setq lsp-objects (append lsp-objects
 			      (compile-if-old "build:clos;" +clos-module-files+
 					      :system-p t :c-file t :data-file t :h-file t
@@ -112,30 +112,35 @@
     ;; We need these two to force dllwrap to export the symbols
     ;; in these libraries. Otherwise it will not be possible to
     ;; call functions from GMP or GC in code that embeds ECL.
+    #+thread
+    (when (probe-file "@LIBPREFIX@atomic_ops.@LIBEXT@")
+      (push "@LIBPREFIX@atomic_ops.@LIBEXT@" extra-args))
     (when (probe-file "@LIBPREFIX@eclgc.@LIBEXT@")
       (push "@LIBPREFIX@eclgc.@LIBEXT@" extra-args))
     (when (probe-file "@LIBPREFIX@eclgmp.@LIBEXT@")
       (push "@LIBPREFIX@eclgmp.@LIBEXT@" extra-args)))
   (print extra-args)
-  (apply #'c::shared-cc
-	 (compile-file-pathname "ecl" :type :dll)
-	 "c/main.@OBJEXT@"
-	 "c/all_symbols2.@OBJEXT@"
-	 "@LIBPREFIX@lsp.@LIBEXT@"
-	 "@LIBPREFIX@eclmin.@LIBEXT@"
-	 extra-args))
+  (c::shared-cc (compile-file-pathname "ecl" :type :dll)
+                (list* "c/main.@OBJEXT@"
+                       "c/all_symbols2.@OBJEXT@"
+                       "@LIBPREFIX@lsp.@LIBEXT@"
+                       "@LIBPREFIX@eclmin.@LIBEXT@"
+                       extra-args)))
 
 ;;;
 ;;; * Compile and link Common-Lisp to C compiler
 ;;;
-(proclaim '(optimize (safety 2) (space 3)))
+(mapc #'proclaim +ecl-optimization-settings+)
 
+#+windows
+(setq *features* (cons :wants-bytecmp (cons :builtin-bytecmp *features*)))
+
+#-mingw32
 (si::pathname-translations "SYS" '(("**;*.*.*" "@ecldir\@/**/*.*")))
 
 #+WANTS-CMP
 (build-module "cmp" +cmp-module-files+ 
               :dir "build:@ECL_CMPDIR@;" :prefix "CMP"
-              :additional-files '("sysfun.lsp")
               :builtin #+:BUILTIN-CMP t #-:BUILTIN-CMP nil)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -154,6 +159,21 @@
               :builtin
 	      #+:BUILTIN-BYTECMP t
 	      #-:BUILTIN-BYTECMP nil)
+
+;;;
+;;; * SSE
+;;;
+#+(and WANTS-CMP SSE2)
+(build-module "cl-simd"
+              '("ext:cl-simd;sse-package.lisp"
+                "ext:cl-simd;ecl-sse-core.lisp"
+                "ext:cl-simd;sse-intrinsics.lisp"
+                "ext:cl-simd;sse-array-defs.lisp"
+                "ext:cl-simd;ecl-sse-utils.lisp"
+                "ext:cl-simd;sse-utils.lisp")
+              :dir "build:ext;"
+              :prefix "EXT"
+              :builtin nil)
 
 ;;;
 ;;; * DEFSYSTEM
@@ -175,6 +195,8 @@
               :dir "build:ext;"
               :prefix "EXT"
               :builtin #+:BUILTIN-ASDF t #-:BUILTIN-ASDF nil)
+(push (build-fake-asdf "prebuilt-asdf" "asdf")
+      *module-files*)
 
 ;;;
 ;;; * PROFILE
@@ -293,12 +315,25 @@
 
 (setq si::*init-function-prefix* NIL)
 
+#+windows
+(progn
+ (with-open-file (s "ecl.rc"
+                  :direction :output
+                  :if-exists :supersede
+                  :if-does-not-exist :create)
+  (write-line "id ICON \"ecl.ico\"" s))
+ (ext:copy-file #p"src:util;ecl.ico" "ecl.ico")
+ #+msvc
+ (ext:run-program "rc" '("/r" "ecl.rc"))
+ #-msvc
+ (ext:run-program "windres" '("ecl.rc" "-O" "coff" "ecl.res")))
+
 (compiler::build-program
  #+:msvc "ecl2"
  #+(and (or cross stage1) (not msvc)) "bin/ecl"
  #-(or cross stage1 msvc) "ecl2"
  :lisp-files *module-symbols*
- :ld-flags '(#-msvc "-L./"))
+ :ld-flags '(#-msvc "-L./" #+windows "ecl.res"))
 
 (with-open-file (modules-list #P"build:MODULES" :direction :output)
   (dolist (module-file *module-files*)

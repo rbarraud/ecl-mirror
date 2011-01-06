@@ -74,28 +74,33 @@
 #include <stdio.h>
 /* To get APCProc calls */
 #define _WIN32_WINNT 0x400
+#include <signal.h>
+
+#if defined(_MSC_VER) || defined(__MINGW32__)
+# include <windows.h>
+#endif
+#if !defined(_MSC_VER)
+# include <unistd.h>
+#endif
+
 #include <ecl/ecl.h>
+
 #if defined(HAVE_FENV_H) && !defined(ECL_AVOID_FENV_H)
 # ifndef _GNU_SOURCE
 #  define _GNU_SOURCE
 # endif
 # include <fenv.h>
 #endif
-#include <signal.h>
+
 #ifdef ECL_USE_MPROTECT
 # ifndef SA_SIGINFO
 #  error "We cannot use the mmap code without siginfo"
 # endif
 # include <sys/mman.h>
 #endif
-#if defined(__MINGW32__) || defined(_MSC_VER)
-# include <windows.h>
-#endif
-#if !defined(_MSC_VER)
-# include <unistd.h>
-#endif
-#define ECL_DEFINE_FENV_CONSTANTS
 #include <ecl/internal.h>
+#include <ecl/ecl-inl.h>
+#include <ecl/impl/math_fenv.h>
 
 static struct {
 	int code;
@@ -254,7 +259,7 @@ handler_fn_protype(lisp_signal_handler, int sig, siginfo_t *info, void *aux)
         /* The lisp environment might not be installed. */
         if (the_env == NULL)
                 return;
-#if defined(ECL_THREADS) && !defined(_MSC_VER) && !defined(__MINGW32__)
+#if defined(ECL_THREADS) && !defined(ECL_MS_WINDOWS_HOST)
         if (sig == ecl_get_option(ECL_OPT_THREAD_INTERRUPT_SIGNAL)) {
 		return pop_signal(the_env);
         }
@@ -286,26 +291,28 @@ handler_fn_protype(lisp_signal_handler, int sig, siginfo_t *info, void *aux)
 			code = FE_DIVBYZERO;
                         break;
                 }
-#endif
-#if defined(HAVE_FENV_H) & !defined(ECL_AVOID_FENV_H)
-		if (fetestexcept(FE_DIVBYZERO)) {
+#else
+# if defined(HAVE_FENV_H) & !defined(ECL_AVOID_FENV_H)
+                code = fetestexcept(FE_ALL_EXCEPT);
+		if (code & FE_DIVBYZERO) {
 			condition = @'division-by-zero';
 			code = FE_DIVBYZERO;
-		} else if (fetestexcept(FE_INVALID)) {
+		} else if (code & FE_INVALID) {
 			condition = @'floating-point-invalid-operation';
 			code = FE_INVALID;
-		} else if (fetestexcept(FE_OVERFLOW)) {
+		} else if (code & FE_OVERFLOW) {
 			condition = @'floating-point-overflow';
 			code = FE_OVERFLOW;
-		} else if (fetestexcept(FE_UNDERFLOW)) {
+		} else if (code & FE_UNDERFLOW) {
 			condition = @'floating-point-underflow';
 			code = FE_UNDERFLOW;
-		} else if (fetestexcept(FE_INEXACT)) {
+		} else if (code & FE_INEXACT) {
 			condition = @'floating-point-inexact';
 			code = FE_INEXACT;
 		}
                 feclearexcept(FE_ALL_EXCEPT);
-#endif
+# endif
+#endif /* !_MSC_VER */
 #ifdef SA_SIGINFO
 		if (info) {
 			if (info->si_code == FPE_INTDIV || info->si_code == FPE_FLTDIV) {
@@ -362,15 +369,18 @@ unblock_signal(int signal)
 }
 #endif
 
+ecl_def_ct_base_string(str_ignore_signal,"Ignore signal",13,static,const);
+
 static void
 handle_signal_now(cl_object signal_code)
 {
         switch (type_of(signal_code)) {
         case t_fixnum:
-                FEerror("Serious signal ~D caught.", 1, signal_code);
+                cl_cerror(4, str_ignore_signal, @'ext::unix-signal-received',
+                          @':code', signal_code);
                 break;
         case t_symbol:
-                cl_error(1, signal_code);
+                cl_cerror(2, str_ignore_signal, signal_code);
                 break;
         case t_cfun:
         case t_cfunfixed:
@@ -669,7 +679,7 @@ si_catch_signal(cl_object code, cl_object boolean)
 			0);
 # endif
 #endif
-#if defined(ECL_THREADS) && !defined(_MSC_VER) && !defined(__MINGW32__)
+#if defined(ECL_THREADS) && !defined(ECL_MS_WINDOWS_HOST)
 	if (code_int == ecl_get_option(ECL_OPT_THREAD_INTERRUPT_SIGNAL)) {
 		FEerror("It is not allowed to change the behavior of ~D", 1,
                         MAKE_FIXNUM(code_int));
@@ -958,7 +968,7 @@ si_trap_fpe(cl_object condition, cl_object flag)
 # ifdef HAVE_FENV_H
         feclearexcept(all);
 # endif
-# if defined(_MSC_VER) || defined(__MINGW32__)
+# if defined(ECL_MS_WINDOWS_HOST)
 	_fpreset();
 # endif
 # ifdef HAVE_FEENABLEEXCEPT
@@ -979,7 +989,7 @@ si_trap_fpe(cl_object condition, cl_object flag)
 static void
 install_asynchronous_signal_handlers()
 {
-#if defined(_MSC_VER)
+#if defined(ECL_MS_WINDOWS_HOST)
 # define async_handler(signal,handler,mask)
 #else
 # if defined(ECL_THREADS) && defined(HAVE_SIGPROCMASK)
@@ -1042,9 +1052,9 @@ install_signal_handling_thread()
 				      Cnil,
 				      0);
 		cl_object process =
-			mp_process_run_function(2,
-						@'si::signal-servicing',
-						fun);
+			mp_process_run_function_wait(2,
+                                                     @'si::signal-servicing',
+                                                     fun);
 		if (Null(process)) {
 			ecl_internal_error("Unable to create signal "
 					   "servicing thread");
@@ -1066,7 +1076,7 @@ install_process_interrupt_handler()
 #else
 # define DEFAULT_THREAD_INTERRUPT_SIGNAL SIGUSR1
 #endif
-#if defined(ECL_THREADS) && !defined(_MSC_VER) && !defined(__MINGW32__)
+#if defined(ECL_THREADS) && !defined(ECL_MS_WINDOWS_HOST)
 	if (ecl_get_option(ECL_OPT_TRAP_INTERRUPT_SIGNAL)) {
 		int signal = ecl_get_option(ECL_OPT_THREAD_INTERRUPT_SIGNAL);
 		if (signal == 0) {
@@ -1101,6 +1111,11 @@ install_synchronous_signal_handlers()
 		mysignal(SIGSEGV, sigsegv_handler);
 	}
 #endif
+#ifdef SIGPIPE
+	if (ecl_get_option(ECL_OPT_TRAP_SIGPIPE)) {
+		mysignal(SIGPIPE, non_evil_signal_handler);
+	}
+#endif
 }
 
 /*
@@ -1120,6 +1135,7 @@ install_fpe_signal_handlers()
 		 * denormals in floating point computations */
 		si_trap_fpe(@'floating-point-invalid-operation', Cnil);
 		si_trap_fpe(@'division-by-zero', Cnil);
+		si_trap_fpe(@'floating-point-overflow', Cnil);
 # endif
 	}
 #endif

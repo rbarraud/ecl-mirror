@@ -14,6 +14,22 @@
 
 (in-package "SYSTEM")
 
+#+ecl-min
+(eval-when (:execute)
+  (load (merge-pathnames "seqmacros.lsp" *load-truename*)))
+
+(defun error-not-a-sequence (value)
+  (declare (si::c-local))
+  (signal-type-error value 'sequence))
+
+(defun error-sequence-index (sequence index)
+  (declare (si::c-local))
+  (error 'simple-type-error
+         :datum index
+         :expected-type 'unsigned-byte
+         :format-control "Not a valid index ~A into sequence ~A"
+         :format-arguments (list index sequence)))
+
 (defun error-sequence-type (type)
   (declare (si::c-local))
   (error 'simple-type-error
@@ -125,32 +141,78 @@ default value of INITIAL-ELEMENT depends on TYPE."
     sequence))
 
 (defun make-seq-iterator (sequence &optional (start 0))
-  (cond ((null start)
-	 (setf start 0))
-	((not (integerp start))
-	 (error "Value ~A is not a valid index into sequence ~A" start sequence)))
-  (cond ((consp sequence)
-	 (nthcdr start sequence))
-	((>= start (length sequence))
-	 nil)
-	(t
-	 start)))
+  (declare (optimize (safety 0)))
+  (cond ((fixnump start)
+         (let ((aux start))
+           (declare (fixnum aux))
+           (cond ((minusp aux)
+                  (error-sequence-index sequence start))
+                 ((listp sequence)
+                  (nthcdr aux sequence))
+                 ((vectorp sequence)
+                  (and (< start (length (the vector sequence)))
+                       start))
+                 (t
+                  (error-not-a-sequence sequence)))))
+        ((not (or (listp sequence) (vectorp sequence)))
+         (error-not-a-sequence sequence))
+        ((integerp start)
+         nil)
+        (t
+         (error-sequence-index sequence start))))
 
 (defun seq-iterator-ref (sequence iterator)
+  (declare (optimize (safety 0)))
   (if (si::fixnump iterator)
-      (elt sequence iterator)
-      (first iterator)))
+      (aref (the vector sequence) iterator)
+      (car (the cons iterator))))
 
 (defun seq-iterator-set (sequence iterator value)
+  (declare (optimize (safety 0)))
   (if (si::fixnump iterator)
-      (setf (elt sequence iterator) value)
-      (setf (first iterator) value)))
+      (setf (aref (the vector sequence) iterator) value)
+      (setf (car (the cons iterator)) value)))
 
 (defun seq-iterator-next (sequence iterator)
-  (if (fixnump iterator)
-      (and (< (incf iterator) (length sequence))
-	   iterator)
-      (rest iterator)))
+  (declare (optimize (safety 0)))
+  (cond ((fixnump iterator)
+         (let ((aux (1+ iterator)))
+           (declare (fixnum aux))
+           (and (< aux (length (the vector sequence)))
+                aux)))
+        ((atom iterator)
+         (error-not-a-sequence iterator))
+        (t
+         (setf iterator (cdr (the cons iterator)))
+         (unless (listp iterator)
+           (error-not-a-sequence iterator))
+         iterator)))
+
+(defun seq-iterator-list-pop (values-list seq-list iterator-list)
+  (declare (optimize (safety 0)))
+  (do* ((it-list iterator-list)
+        (v-list values-list))
+       ((null v-list)
+        values-list)
+    (let* ((it (cons-car it-list))
+           (sequence (cons-car seq-list)))
+      (cond ((null it)
+             (return nil))
+            ((fixnump it)
+             (let* ((n it) (s sequence))
+               (declare (fixnum n) (vector s))
+               (rplaca v-list (aref s n))
+               (rplaca it-list (and (< (incf n) (length s)) n))))
+            ((atom it)
+             (error-not-a-sequence it))
+            (t
+             (rplaca v-list (cons-car it))
+             (unless (listp (setf it (cons-cdr it)))
+               (error-not-a-sequence it))
+             (rplaca it-list it)))
+      (setf v-list (cons-cdr v-list)
+            it-list (cons-cdr it-list)
+            seq-list (cons-cdr seq-list)))))
 
 (defun coerce-to-list (object)
   (if (listp object)
@@ -160,9 +222,10 @@ default value of INITIAL-ELEMENT depends on TYPE."
 	  ((null it) (nreverse output))
 	(push (seq-iterator-ref object it) output))))
 
-(defun coerce-to-vector (object elt-type length)
+(defun coerce-to-vector (object elt-type length simple-array-p)
   (let ((output object))
     (unless (and (vectorp object)
+                 (or (null simple-array-p) (simple-array-p object))
 		 (eq (array-element-type object) elt-type))
       (let* ((final-length (if (eq length '*) (length object) length)))
 	(setf output (make-vector elt-type final-length nil nil nil 0))
@@ -198,57 +261,40 @@ SEQUENCEs."
 Creates and returns a sequence of TYPE with K elements, with the N-th element
 being the value of applying FUNCTION to the N-th elements of the given
 SEQUENCEs, where K is the minimum length of the given SEQUENCEs."
-  (setq more-sequences (cons sequence more-sequences))
-  (do* ((l (apply #'min (mapcar #'length more-sequences)))
-        (it (mapcar #'make-seq-iterator more-sequences))
-	(val (make-sequence 'list (length more-sequences)))
-	(x (unless (null result-type) (make-sequence result-type l)))
-	(ix (unless (null result-type) (make-seq-iterator x))))
-       (nil)
-    (do ((i it (cdr i))
-         (v val (cdr v))
-	 (s more-sequences (cdr s)))
-	((null i))
-      (unless (car i) (return-from map x))
-      (rplaca v (seq-iterator-ref (car s) (car i)))
-      (rplaca i (seq-iterator-next (car s) (car i))))
-    (let ((that-value (apply function val)))
-      (unless (null result-type)
-        (seq-iterator-set x ix that-value)
-	(setq ix (seq-iterator-next x ix))))))
+  (let* ((sequences (list* sequence more-sequences))
+         (function (si::coerce-to-function function))
+         output
+         it)
+    (when result-type
+      (let ((l (length sequence)))
+        (when more-sequences
+          (setf l (reduce #'min more-sequences
+                          :initial-value l
+                          :key #'length)))
+        (setf output (make-sequence result-type l)
+              it (make-seq-iterator output))))
+    (do-sequences (elt-list sequences :output output)
+      (let ((value (apply function elt-list)))
+        (when result-type
+          (seq-iterator-set output it value)
+          (setf it (seq-iterator-next output it)))))))
 
-(eval-when (eval compile)
-(defmacro def-seq-bool-parser (name doc test end-value)
- `(defun ,name (predicate sequence &rest more-sequences)
-    ,doc
-    (setq more-sequences (cons sequence more-sequences))
-    (do ((it (mapcar #'make-seq-iterator more-sequences))
-         (val (make-sequence 'list (length more-sequences))))
-        (nil)
-      (declare (optimize (safety 0)))
-      (do ((i it (cdr i))
-           (v val (cdr v))
-	   (s more-sequences (cdr s)))
-          ((null i))
-        (unless (car i) (return-from ,name ,end-value))
-        (rplaca v (seq-iterator-ref (car s) (car i)))
-        (rplaca i (seq-iterator-next (car s) (car i))))
-      (let ((that-value
-             (apply predicate val)))
-        ,test)))))
-
-(def-seq-bool-parser some
+(defun some (predicate sequence &rest more-sequences)
   "Args: (predicate sequence &rest more-sequences)
 Returns T if at least one of the elements in SEQUENCEs satisfies PREDICATE;
 NIL otherwise."
-  (when that-value (return that-value))
-  nil)
+  (reckless
+   (do-sequences (elt-list (cons sequence more-sequences) :output nil)
+     (let ((x (apply predicate elt-list)))
+       (when x (return x))))))
 
-(def-seq-bool-parser every
+(defun every (predicate sequence &rest more-sequences)
   "Args: (predicate sequence &rest more-sequences)
 Returns T if every elements of SEQUENCEs satisfy PREDICATE; NIL otherwise."
-  (unless that-value (return nil))
-  t)
+  (reckless
+   (do-sequences (elt-list (cons sequence more-sequences) :output t)
+     (unless (apply predicate elt-list)
+       (return nil)))))
 
 #|
 (def-seq-bool-parser notany

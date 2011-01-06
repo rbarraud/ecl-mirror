@@ -15,12 +15,6 @@
 
 (in-package "COMPILER")
 
-;;; Like macro-function except it searches the lexical environment,
-;;; to determine if the macro is shadowed by a function or a macro.
-(defun cmp-macro-function (name)
-  (or (cmp-env-search-macro name)
-      (macro-function name)))
-
 (defun unoptimized-long-call (fun arguments)
   (let ((frame (gensym)))
     (c1expr `(with-stack ,frame
@@ -30,7 +24,8 @@
 (defun unoptimized-funcall (fun arguments)
   (let ((l (length arguments)))
     (if (<= l si::c-arguments-limit)
-	(make-c1form* 'FUNCALL :args (c1expr fun) (c1args* arguments))
+	(make-c1form* 'FUNCALL :sp-change t :side-effects t
+                      :args (c1expr fun) (c1args* arguments))
 	(unoptimized-long-call fun arguments))))
 
 (defun c1funcall (args)
@@ -116,16 +111,18 @@
     (return-from call-global-loc
       (call-unknown-global-loc fname nil (inline-args args))))
 
-  ;; Open-codable function.
-  (let* ((arg-types (mapcar #'c1form-primary-type args))
-         (ii (inline-function fname arg-types (type-and return-type expected-type))))
-    (setf args (inline-args args (and ii (inline-info-arg-types ii))))
-    (when ii
-      (return-from call-global-loc (apply-inline-info ii args))))
+  (setf args (inline-args args))
+
+  ;; Try with a function that has a C-INLINE expansion
+  (let ((inline-loc (apply-inliner fname
+                                   (type-and return-type expected-type)
+                                   args)))
+    (when inline-loc
+      (return-from call-global-loc inline-loc)))
 
   ;; Call to a function defined in the same file. Direct calls are
   ;; only emitted for low or neutral values of DEBUG is >= 2.
-  (when (and (<= (cmp-env-optimization 'debug) 1)
+  (when (and (policy-use-direct-C-call)
              (or (fun-p fun)
                  (and (null fun)
                       (setf fun (find fname *global-funs* :test #'same-fname-p
@@ -139,7 +136,7 @@
   ;; Call to a function whose C language function name is known,
   ;; either because it has been proclaimed so, or because it belongs
   ;; to the runtime.
-  (when (and (<= (cmp-env-optimization 'debug) 1)
+  (when (and (policy-use-direct-C-call)
              (setf fd (get-sysprop fname 'Lfun)))
     (multiple-value-bind (minarg maxarg) (get-proclaimed-narg fname)
       (return-from call-global-loc
@@ -166,11 +163,11 @@
       (unless declared
 	(if (= maxarg minarg)
 	    (progn
-	      (wt-h1 "extern cl_object ") (wt-h1 fun-c-name) (wt-h1 "(")
+	      (wt-nl-h "extern cl_object " fun-c-name "(")
 	      (dotimes (i maxarg)
 		(when (> i 0) (wt-h1 ","))
 		(wt-h1 "cl_object"))
-	      (wt-h1 ")"))
+	      (wt-h1 ");"))
 	    (progn
 	      (wt-nl-h "#ifdef __cplusplus")
 	      (wt-nl-h "extern cl_object " fun-c-name "(...);")
@@ -279,13 +276,3 @@
     (when (fun-needs-narg fun)
       (push narg args))
     (wt-call fun-c-name args fun-lisp-name env)))
-
-;;; ----------------------------------------------------------------------
-
-(put-sysprop 'funcall 'C1 'c1funcall)
-(put-sysprop 'funcall 'c2 'c2funcall)
-(put-sysprop 'call-global 'c2 'c2call-global)
-
-(put-sysprop 'CALL 'WT-LOC #'wt-call)
-(put-sysprop 'CALL-NORMAL 'WT-LOC #'wt-call-normal)
-(put-sysprop 'CALL-INDIRECT 'WT-LOC #'wt-call-indirect)

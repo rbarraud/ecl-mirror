@@ -104,47 +104,10 @@ _ecl_big_register_normalize(cl_object x)
 	return _ecl_big_register_copy(x);
 }
 
-#if ECL_LONG_BITS < FIXNUM_BITS
-# undef _ecl_big_set_fixnum
-# undef _ecl_big_set_index
-# if GMP_LIMB_BITS >= FIXNUM_BITS
-cl_object
-_ecl_big_set_fixnum(cl_object x, cl_fixnum f)
-{
-        if (f == 0) {
-                mpz_set_si(x->big.big_num, 0);
-        } else if (f > 0) {
-                x->big.big_size = 1;
-                x->big.big_limbs[0] = f;
-        } else if (f < 0) {
-                x->big.big_size = -1;
-                x->big.big_limbs[0] = -f;
-        }
-}
-
-cl_object
-_ecl_big_set_index(cl_object x, cl_index f)
-{
-        if (f == 0) {
-                mpz_set_si(x->big.big_num, 0);
-        } else if (f > 0) {
-                x->big.big_size = 1;
-                x->big.big_limbs[0] = f;
-        } else if (f < 0) {
-                x->big.big_size = -1;
-                x->big.big_limbs[0] = -f;
-        }
-}
-
-# else
-#  error "ECL cannot build with GMP when both long and mp_limb_t are smaller than cl_fixnum"
-# endif
-#endif /* ECL_LONG_BITS >= FIXNUM_BITS */
-
 #if GMP_LIMB_BITS >= FIXNUM_BITS
 static const limbs_per_fixnum = 1;
 #else
-static conts limbs_per_fixnum = (FIXNUM_BITS + GMP_LIMB_BITS - 1) / GMP_LIMB_BITS;
+static const limbs_per_fixnum = (FIXNUM_BITS + GMP_LIMB_BITS - 1) / GMP_LIMB_BITS;
 #endif
 
 
@@ -160,7 +123,7 @@ _ecl_fix_times_fix(cl_fixnum x, cl_fixnum y)
         ECL_WITH_TEMP_BIGNUM(w,4);
         mpz_set_si(z->big.big_num, x);
         mpz_set_si(w->big.big_num, y);
-        mpz_mu(z->big.big_num, z->big.big_num, w->big.big_num);
+        mpz_mul(z->big.big_num, z->big.big_num, w->big.big_num);
 #endif
         {
                 cl_object y = big_normalize(z);
@@ -336,6 +299,204 @@ static void
 mp_free(void *ptr, size_t size)
 {
         ecl_dealloc(ptr);
+}
+
+#undef _ecl_big_set_fixnum
+#undef _ecl_big_set_index
+#if ECL_LONG_BITS >= FIXNUM_BITS
+cl_object
+_ecl_big_set_fixnum(cl_object x, cl_fixnum f)
+{
+        mpz_set_si((x)->big.big_num,(f));
+        return x;
+}
+
+cl_object
+_ecl_big_set_index(cl_object x, cl_index f)
+{
+        mpz_set_ui((x)->big.big_num,(f));
+        return x;
+}
+#else
+# if GMP_LIMB_BITS >= FIXNUM_BITS
+cl_object
+_ecl_big_set_fixnum(cl_object x, cl_fixnum f)
+{
+        if (f == 0) {
+                mpz_set_si(x->big.big_num, 0);
+        } else if (f > 0) {
+                x->big.big_size = 1;
+                x->big.big_limbs[0] = f;
+        } else if (f < 0) {
+                x->big.big_size = -1;
+                x->big.big_limbs[0] = -f;
+        }
+}
+
+cl_object
+_ecl_big_set_index(cl_object x, cl_index f)
+{
+        if (f == 0) {
+                mpz_set_si(x->big.big_num, 0);
+        } else if (f > 0) {
+                x->big.big_size = 1;
+                x->big.big_limbs[0] = f;
+        } else if (f < 0) {
+                x->big.big_size = -1;
+                x->big.big_limbs[0] = -f;
+        }
+}
+# else
+#   error "ECL cannot build with GMP when both long and mp_limb_t are smaller than cl_fixnum"
+# endif /* GMP_LIMB_BITS >= FIXNUM_BITS */
+#endif /* ECL_LONG_BITS >= FIXNUM_BITS */
+
+#ifdef ECL_LONG_FLOAT
+long double
+_ecl_big_to_long_double(cl_object o)
+{
+        long double output = 0;
+        int i, l = mpz_size(o->big.big_num), exp = 0;
+        for (i = 0; i < l; i++) {
+                output += ldexpl(mpz_getlimbn(o->big.big_num, i), exp);
+                exp += GMP_LIMB_BITS;
+        }
+        return (mpz_sgn(o->big.big_num) < 0)? -output : output;
+}
+#endif
+
+static void
+mpz_ior_op(cl_object out, cl_object i, cl_object j)
+{
+	mpz_ior(out->big.big_num, i->big.big_num, j->big.big_num);
+}
+
+static void
+mpz_xor_op(cl_object out, cl_object i, cl_object j)
+{
+	mpz_xor(out->big.big_num, i->big.big_num, j->big.big_num);
+}
+
+static void
+mpz_and_op(cl_object out, cl_object i, cl_object j)
+{
+	mpz_and(out->big.big_num, i->big.big_num, j->big.big_num);
+}
+
+static void
+mpz_eqv_op(cl_object out, cl_object i, cl_object j)
+{
+	mpz_xor(out->big.big_num, i->big.big_num, j->big.big_num);
+	mpz_com(out->big.big_num, out->big.big_num);
+}
+
+static void
+mpz_nand_op(cl_object out, cl_object i, cl_object j)
+{
+	mpz_and(out->big.big_num, i->big.big_num, j->big.big_num);
+	mpz_com(out->big.big_num, out->big.big_num);
+}
+
+static void
+mpz_nor_op(cl_object out, cl_object i, cl_object j)
+{
+	mpz_ior(out->big.big_num, i->big.big_num, j->big.big_num);
+	mpz_com(out->big.big_num, out->big.big_num);
+}
+
+static void
+mpz_andc1_op(cl_object out, cl_object i, cl_object j)
+{
+	mpz_com(out->big.big_num, i->big.big_num);
+	mpz_and(out->big.big_num, out->big.big_num, j->big.big_num);
+}
+
+static void
+mpz_orc1_op(cl_object out, cl_object i, cl_object j)
+{
+	mpz_com(out->big.big_num, i->big.big_num);
+	mpz_ior(out->big.big_num, out->big.big_num, j->big.big_num);
+}
+
+static void
+mpz_andc2_op(cl_object out, cl_object i, cl_object j)
+{
+	/* (i & ~j) = ~((~i) | j) */
+	mpz_orc1_op(out, i, j);
+	mpz_com(out->big.big_num, out->big.big_num);
+}
+
+static void
+mpz_orc2_op(cl_object out, cl_object i, cl_object j)
+{
+	/* (i | ~j) = ~((~i) & j) */
+	mpz_andc1_op(out, i, j);
+	mpz_com(out->big.big_num, out->big.big_num);
+}
+
+static void
+mpz_b_clr_op(cl_object out, cl_object i, cl_object j)
+{
+	mpz_set_si(out->big.big_num, 0);
+}
+
+static void
+mpz_b_set_op(cl_object o, cl_object i, cl_object j)
+{
+	mpz_set_si(o->big.big_num, -1);
+}
+
+static void
+mpz_b_1_op(cl_object out, cl_object i, cl_object j)
+{
+        if (i != out)
+                mpz_set(out->big.big_num, i->big.big_num);
+}
+
+static void
+mpz_b_2_op(cl_object out, cl_object i, cl_object j)
+{
+	mpz_set(out->big.big_num, j->big.big_num);
+}
+
+static void
+mpz_b_c1_op(cl_object out, cl_object i, cl_object j)
+{
+	mpz_com(out->big.big_num, i->big.big_num);
+}
+
+static void
+mpz_b_c2_op(cl_object out, cl_object i, cl_object j)
+{
+	mpz_com(out->big.big_num, j->big.big_num);
+}
+
+static _ecl_big_binary_op bignum_operations[16] = {
+	mpz_b_clr_op,
+	mpz_and_op,
+	mpz_andc2_op,
+	mpz_b_1_op,
+	mpz_andc1_op,
+	mpz_b_2_op,
+	mpz_xor_op,
+	mpz_ior_op,
+	mpz_nor_op,
+	mpz_eqv_op,
+	mpz_b_c2_op,
+	mpz_orc2_op,
+	mpz_b_c1_op,
+	mpz_orc1_op,
+	mpz_nand_op,
+	mpz_b_set_op};
+
+_ecl_big_binary_op
+_ecl_big_boole_operator(int op)
+{
+        unlikely_if((op < 0) || (op >= 16)) {
+                ecl_internal_error("_ecl_big_boole_operator passed "
+                                   "an invalid operator");
+        }
+        return bignum_operations[op];
 }
 
 void

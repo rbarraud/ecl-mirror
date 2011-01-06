@@ -1,11 +1,25 @@
 dnl -*- autoconf -*-
 
 dnl --------------------------------------------------------------
+dnl check existence of long double and supporting functions
+AC_DEFUN([ECL_LONG_DOUBLE],[
+if test "$enable_longdouble" != "no" ; then
+AC_CHECK_TYPES([long double],[enable_longdouble=yes],[enable_longdouble=no])
+if test "$enable_longdouble" != "no" ; then
+AC_CHECK_FUNCS([sinl cosl tanl logl expl],[],[enable_longdouble=no; break])
+if test "$enable_longdouble" != "no" ; then
+AC_DEFINE(ECL_LONG_FLOAT)
+fi
+fi
+fi
+])
+
+dnl --------------------------------------------------------------
 dnl http://autoconf-archive.cryp.to/ac_c_long_long_.html
 dnl Provides a test for the existance of the long long int type and defines HAVE_LONG_LONG if it is found.
 AC_DEFUN([ECL_LONG_LONG],
 [AC_MSG_CHECKING(size of long long)
-if test "x$ECL_LONG_LONG_BITS" = "no"; then
+if test "x$ECL_LONG_LONG_BITS" = "xno"; then
   AC_MSG_RESULT(not available)
   ac_cv_c_long_long=no
   ECL_LONG_LONG_BITS=""
@@ -100,6 +114,8 @@ CL_FIXNUM_TYPE=int
 CL_FIXNUM_BITS=32
 CL_FIXNUM_MAX=536870911L
 CL_FIXNUM_MIN=-536870912L
+CL_INT_BITS=32
+CL_LONG_BITS=32
 
 ### 1.3) Order of bytes within a word
 ECL_BIGENDIAN=no
@@ -125,8 +141,8 @@ ECL_UINT16_T=uint16_t
 ECL_UINT32_T=uint32_t
 ECL_UINT64_T=no
 ECL_INT8_T=int8_t
-ECL_INT16_T=uint16_t
-ECL_INT32_T=uint32_t
+ECL_INT16_T=int16_t
+ECL_INT32_T=int32_t
 ECL_INT64_T=no
 ECL_LONG_LONG_BITS=no
 
@@ -230,7 +246,7 @@ THREAD_CFLAGS=''
 THREAD_LIBS=''
 THREAD_GC_FLAGS='--enable-threads=posix'
 INSTALL_TARGET='install'
-THREAD_OBJ='threads threads_mutex'
+THREAD_OBJ="$THREAD_OBJ threads/process threads/mutex threads/condition_variable"
 clibs=''
 SONAME=''
 SONAME_LDFLAGS=''
@@ -314,8 +330,11 @@ case "${host_os}" in
 		clibs='-ldl'
 		# We should use C99 and _XOPEN_SOURCE=600, but Solaris 10
 		# ships with GCC 3.4.3 which does not support C99
-		# CFLAGS="${CFLAGS} -std=gnu99"
-		enable_slow_config=yes
+                if test "x$GCC" = "xyes"; then
+                  CFLAGS="${CFLAGS} -std=gnu99"
+                  SHARED_LDFLAGS="-shared $SHARED_LDFLAGS"
+                  BUNDLE_LDFLAGS="-shared $BUNDLE_LDFLAGS"
+                fi
 		;;
 	cygwin*)
 		thehost='cygwin'
@@ -332,6 +351,7 @@ case "${host_os}" in
 		thehost='mingw32'
 		clibs=''
 		shared='yes'
+                enable_threads='yes'
 		THREAD_CFLAGS='-D_THREAD_SAFE'
 		THREAD_GC_FLAGS='--enable-threads=win32'
 		SHARED_LDFLAGS=''
@@ -445,6 +465,21 @@ int main() {
 }]])],[ECL_FILE_CNT=3],[])
 fi
 ])
+
+dnl ---------------------------------------------------------------------
+dnl Check availability of standard sized integer types of a given width.  
+dnl On success, define the global variables ECL_INTx_T and ECL_UNITx_T to 
+dnl hold the names of the corresponding standard C integer types.
+AC_DEFUN(ECL_CHECK_SIZED_INTEGER_TYPE,[
+AC_TYPE_INT$1_T
+AC_TYPE_UINT$1_T
+if test "x$ac_cv_c_int$1_t" = xyes; then
+  eval ECL_INT$1_T="int$1_t"
+  eval ECL_UINT$1_T="uint$1_t"
+  AC_DEFINE_UNQUOTED([ecl_int$1_t],[int$1_t])
+  AC_DEFINE_UNQUOTED([ecl_uint$1_t],[uint$1_t])
+fi])
+
 dnl
 dnl --------------------------------------------------------------
 dnl Check the existence of different integer types and that they
@@ -458,91 +493,12 @@ if test -z "${ECL_STDINT_HEADER}"; then
 AC_CHECK_HEADER([inttypes.h],[AC_DEFINE(HAVE_INTTYPES_H)
 ECL_STDINT_HEADER="#include <inttypes.h>"],[])
 fi
-if test -n "${ECL_STDINT_HEADER}" -a -z "${ECL_UINT8_T}"; then
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#ifdef HAVE_INTTYPES_H
-#include <inttypes.h>
-#else
-#ifdef HAVE_STDINT_H
-#include <stdint.h>
-#endif
-#endif]], [[
-{
-  uint8_t i = 0x80;
-  if (i == 0)
-    return 0;
-  if ((i << 1))
-    return 0;
-  if ((i - 1) != 0x7F)
-    return 0;
-  return 1;
-}]])],[ECL_UINT8_T=uint8_t;ECL_INT8_T=int8_t],[])
-fi
-if test -z "${ECL_UINT8_T}"; then
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM([], [[
-{
-  unsigned char c = 0x80;
-  if (i == 0)
-    return 0;
-  if ((i << 1))
-    return 0;
-  if ((i - 1) != 0x7F)
-    return 0;
-  return 1;
-}]])],[ECL_UINT8_T="unsigned char";ECL_INT8_T="signed char"],[])
-fi
-if test -n "${ECL_STDINT_HEADER}" -a -z "${ECL_UINT16_T}"; then
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#ifdef HAVE_INTTYPES_H
-#include <inttypes.h>
-#else
-#ifdef HAVE_STDINT_H
-#include <stdint.h>
-#endif
-#endif]], [[
-{
-  uint16_t i = 0x8000UL;
-  if (i == 0)
-    return 0;
-  if ((i << 1))
-    return 0;
-  if ((i - 1) != 0x7FFFUL)
-    return 0;
-  return 1;
-}]])],[ECL_UINT16_T=uint16_t;ECL_INT16_T=int16_t],[])
-fi
-if test -n "${ECL_STDINT_HEADER}" -a -z "${ECL_UINT32_T}"; then
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#ifdef HAVE_INTTYPES_H
-#include <inttypes.h>
-#else
-#ifdef HAVE_STDINT_H
-#include <stdint.h>
-#endif
-#endif]], [[
-{
-  uint32_t i = 0x80000000UL;
-  if (i == 0)
-    return 0;
-  if ((i << 1))
-    return 0;
-  if ((i - 1) != 0x7FFFFFFFUL)
-    return 0;
-  return 1;
-}]])],[ECL_UINT32_T=uint32_t;ECL_INT32_T=int32_t],[])
-fi
-if test -n "${ECL_STDINT_HEADER}" -a -z "${ECL_UINT64_T}"; then
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#ifdef HAVE_INTTYPES_H
-#include <inttypes.h>
-#else
-#ifdef HAVE_STDINT_H
-#include <stdint.h>
-#endif
-#endif]], [[
-{
-  uint64_t i = 1;
-  i <<= 63; if (i == 0) return 0;
-  i <<= 1;  if (i) return 0;
-  return 1;
-}]])],[ECL_UINT64_T=uint64_t;ECL_INT64_T=int64_t],[])
-fi
+
+ECL_CHECK_SIZED_INTEGER_TYPE(8)
+ECL_CHECK_SIZED_INTEGER_TYPE(16)
+ECL_CHECK_SIZED_INTEGER_TYPE(32)
+ECL_CHECK_SIZED_INTEGER_TYPE(64)
+
 if test "${ECL_UINT16_T}${CL_FIXNUM_BITS}" = "16"; then
   ECL_UINT16_T="cl_index"
   ECL_INT16_T="cl_fixnum"
@@ -555,38 +511,9 @@ if test "${ECL_UINT64_T}${CL_FIXNUM_BITS}" = "64"; then
   ECL_UINT64_T="cl_index"
   ECL_INT64_T="cl_fixnum"
 fi
-AC_MSG_CHECKING(uint8_t type)
+
 if test "x${ECL_UINT8_T}" = "x" -o "x${ECL_UINT8_T}" = xno; then
-  AC_MSG_RESULT(none)
   AC_MSG_ERROR(Can not build ECL without byte types)
-else
-  AC_DEFINE_UNQUOTED([ecl_uint8_t],[$ECL_UINT8_T])
-  AC_DEFINE_UNQUOTED([ecl_int8_t],[$ECL_INT8_T])
-  AC_MSG_RESULT(${ECL_UINT8_T})
-fi
-AC_MSG_CHECKING(uint16_t type)
-if test "x${ECL_UINT16_T}" = "x" -o "x${ECL_UINT16_T}" = xno; then
-  AC_MSG_RESULT(none)
-else
-  AC_DEFINE_UNQUOTED([ecl_uint16_t],[$ECL_UINT16_T])
-  AC_DEFINE_UNQUOTED([ecl_int16_t],[$ECL_INT16_T])
-  AC_MSG_RESULT(${ECL_UINT16_T})
-fi
-AC_MSG_CHECKING(uint32_t type)
-if test "x${ECL_UINT32_T}" = "x" -o "x${ECL_UINT32_T}" = xno; then
-  AC_MSG_RESULT(none)
-else
-  AC_DEFINE_UNQUOTED([ecl_uint32_t],[$ECL_UINT32_T])
-  AC_DEFINE_UNQUOTED([ecl_int32_t],[$ECL_INT32_T])
-  AC_MSG_RESULT(${ECL_UINT32_T})
-fi
-AC_MSG_CHECKING(uint64_t type)
-if test "x${ECL_UINT64_T}" = "x" -o "x${ECL_UINT64_T}" = xno; then
-  AC_MSG_RESULT(none)
-else
-  AC_DEFINE_UNQUOTED([ecl_uint64_t],[$ECL_UINT64_T])
-  AC_DEFINE_UNQUOTED([ecl_int64_t],[$ECL_INT64_T])
-  AC_MSG_RESULT(${ECL_UINT64_T})
 fi
 ])
 dnl
@@ -679,6 +606,22 @@ int main() {
     l++;
     fprintf(f,"CL_FIXNUM_MIN='%ld';",l);
     fprintf(f,"CL_FIXNUM_MAX='%ld';",-l);
+#endif
+#ifdef ECL_LONG_LONG_BITS
+  } else if (sizeof(long long) >= sizeof(void*)) {
+    unsigned long long int t = 1;
+    signed long long int l = 0;
+    int_type="long long";
+    for (bits=1; ((t << 1) >> 1) == t; bits++, t <<= 1);
+    l = (~l) << (bits - 3);
+# if 1
+    fprintf(f,"CL_FIXNUM_MIN='%ld';",l);
+    fprintf(f,"CL_FIXNUM_MAX='%ld';",-(l+1));
+# else
+    l++;
+    fprintf(f,"CL_FIXNUM_MIN='%ld';",l);
+    fprintf(f,"CL_FIXNUM_MAX='%ld';",-l);
+# endif
 #endif
   } else {
     exit(1);
@@ -795,57 +738,47 @@ dnl Do we have a non-portable implementation of calls to foreign
 dnl functions?
 dnl
 AC_DEFUN([ECL_FFI],[
+AC_SUBST(ECL_LIBFFI_HEADER)
 AC_CHECK_LIB( ffi, ffi_call, [has_ffi_lib=yes], [has_ffi_lib=no] )
-if test $has_ffi_lib = yes; then
-  AC_CHECK_HEADER( [ffi/ffi.h], [has_ffi_h=$has_ffi_lib], [has_ffi_h=no] )
-fi
-if test $has_ffi_h = "yes"; then
-  AC_DEFINE(HAVE_LIBFFI)
-  LDFLAGS="$LDFLAGS -lffi"
+if test $has_ffi_lib = "yes"; then
+  AC_CHECK_HEADER( [ffi/ffi.h], [ECL_LIBFFI_HEADER='ffi/ffi.h'], [], [] )
+  if test -z "$ECL_LIBFFI_HEADER"; then
+    AC_CHECK_HEADER( [ffi.h], [ECL_LIBFFI_HEADER='ffi.h'], [], [] )
+  fi
+  if test -z "$ECL_LIBFFI_HEADER"; then
+    AC_MSG_WARN([unable to find header file ffi.h; disabling dynamic FFI])
+  else
+    AC_DEFINE(HAVE_LIBFFI)
+    LDFLAGS="$LDFLAGS -lffi"
+  fi
 else
-AC_MSG_CHECKING([whether we can dynamically build calls to C functions])
-case "${host_cpu}" in
-   i686 | i586 | pentium* | athlon* )
-	EXTRA_OBJS="${EXTRA_OBJS} ffi_x86.o"
-	if test "${enable_asmapply}" = "yes" ; then
-		EXTRA_OBJS="${EXTRA_OBJS} apply_x86.o"
-		AC_DEFINE(ECL_ASM_APPLY)
-	fi
-        # OSX may report i386 and still allow building 64-bits
-        # executables.
-        if test $CL_FIXNUM_BITS = 32; then
-          AC_DEFINE(ECL_USE_VARARG_AS_POINTER)
-        fi
-	dynamic_ffi=yes
-	;;
-   x86_64 )
-        if test "${CL_FIXNUM_BITS}" = 32 ; then
-	  EXTRA_OBJS="${EXTRA_OBJS} ffi_x86.o"
-	else
-	  EXTRA_OBJS="${EXTRA_OBJS} ffi_x86_64.o"
-	fi
-	dynamic_ffi=yes
-	;;
-   *)
-	dynamic_ffi=no
-	;;
-esac
-AC_MSG_RESULT([${dynamic_ffi}])
-if test "$dynamic_ffi" = "yes" ; then
-  AC_DEFINE(ECL_DYNAMIC_FFI, 1, [we can build calls to foreign functions])
-fi
+  AC_MSG_WARN([libffi is not installed; disabling dynamic FFI])
 fi
 ])
 
 dnl --------------------------------------------------------------
 dnl Provides a test for the existance of the __thread declaration and
 dnl defines WITH___THREAD if it is found
-AC_DEFUN([ECL___THREAD],
-[AC_CACHE_CHECK(for __thread local data, ac_cv_ecl___thread,
+AC_DEFUN([ECL___THREAD],[
+AC_CACHE_CHECK(for __thread local data, ac_cv_ecl___thread,
 AC_TRY_COMPILE(,[static __thread void *data;],
    ac_cv_ecl___thread=yes,
    ac_cv_ecl___thread=no))
 dnl We deactivate this test because it seems to slow down ECL A LOT!!!
+])
+
+dnl --------------------------------------------------------------
+dnl Determine whether GCC supports backtraces
+dnl
+AC_DEFUN([ECL_GCC_BACKTRACE],[
+AC_RUN_IFELSE(
+  [AC_LANG_SOURCE([[
+    void *foo() { return __builtin_return_address(1); }
+    int main() {
+      return (foo() == 0);
+    }]])],
+  [AC_DEFINE(HAVE___BUILTIN_RETURN_ADDRESS)],
+  [])
 ])
 
 dnl ----------------------------------------------------------------------
@@ -872,6 +805,39 @@ AC_SUBST(ECL_FPE_CODE)
 ])
 
 dnl ----------------------------------------------------------------------
+dnl Decide whether ECL should export SSE intrinsics
+dnl
+AC_DEFUN([ECL_SSE],[
+if test "x$with_sse" = xyes; then
+ AC_MSG_CHECKING([for SSE intrinsics])
+ AC_TRY_LINK([
+#include <xmmintrin.h>
+#include <emmintrin.h>
+],[__m128 value;
+_mm_getcsr();],[sse_included=yes],[sse_included=no])
+ if test "$sse_included" = "no"; then
+  OLD_CFLAGS="$CFLAGS"
+  CFLAGS="$CFLAGS -msse2"
+  AC_TRY_LINK([
+#include <xmmintrin.h>
+#include <emmintrin.h>
+],[__m128 value;
+_mm_getcsr();],[sse_included=yes],[sse_included=no])
+  if test "$sse_included" = "no"; then
+   CFLAGS="$OLD_CFLAGS"
+   with_sse=no
+  fi
+ fi
+ if test "x$with_sse" = xyes; then
+  AC_DEFINE(ECL_SSE2)
+  AC_MSG_RESULT([yes])
+ else
+  AC_MSG_RESULT([no])
+ fi
+fi
+])
+
+dnl ----------------------------------------------------------------------
 dnl Check whether we have unnamed POSIX semaphores available
 AC_DEFUN([ECL_POSIX_SEMAPHORES],[
 AC_MSG_CHECKING(working sem_init())
@@ -889,7 +855,19 @@ AC_MSG_RESULT([$ECL_WORKING_SEM_INIT])
 if test $ECL_WORKING_SEM_INIT = yes ; then
   AC_DEFINE(ECL_SEMAPHORES)
   AC_DEFINE(HAVE_SEM_INIT)
+  THREAD_OBJ="$THREAD_OBJ threads/semaphore"
+  echo $THREAD_OBJ
 fi
+])
+
+dnl ----------------------------------------------------------------------
+dnl Check whether we have POSIX read/write locks are available
+AC_DEFUN([ECL_POSIX_RWLOCK],[
+AC_CHECK_FUNC( [pthread_rwlock_init], [
+  AC_DEFINE(ECL_RWLOCK)
+  AC_DEFINE(HAVE_POSIX_RWLOCK)
+], [])
+THREAD_OBJ="$THREAD_OBJ threads/rwlock"
 ])
 
 
@@ -913,3 +891,58 @@ if test $ECL_WORKING_ENVIRON = yes ; then
 fi
 ])
 
+dnl ----------------------------------------------------------------------
+dnl Configure libatomic-ops
+dnl
+AC_DEFUN([ECL_LIBATOMIC_OPS],[
+if test "x${enable_threads}" != "xno"; then
+  test -d atomic || mkdir atomic
+  (destdir=`${PWDCMD}`; cd atomic && CC="${CC} ${PICFLAG}" \
+   $srcdir/gc/libatomic*/configure --disable-shared --prefix=${destdir} \
+	--infodir=${destdir}/doc --includedir=${destdir}/ecl --with-pic \
+        --libdir=${destdir} --build=${build_alias} --host=${host_alias} \
+        CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS" CPPFLAGS="$CPPFLAGS" CC="${CC} \
+        ${PICFLAG}")
+  SUBDIRS="${SUBDIRS} atomic"
+  CORE_LIBS="-leclatomic ${CORE_LIBS}"
+  if test "${enable_shared}" = "no"; then
+    LIBRARIES="${LIBRARIES} ${LIBPREFIX}eclatomic.${LIBEXT}"
+  fi
+fi
+])
+
+dnl ----------------------------------------------------------------------
+dnl Configure included Boehm GC if needed
+AC_DEFUN([ECL_BOEHM_GC],[
+AC_SUBST(ECL_BOEHM_GC_HEADER)
+case "${enable_boehm}" in
+  included)
+    AC_MSG_NOTICE([Configuring included Boehm GC library:])
+    test -d gc && rm -rf gc
+    if mkdir gc; then
+     (destdir=`${PWDCMD}`; cd gc; \
+      $srcdir/gc/configure --disable-shared --prefix=${destdir} \
+	--includedir=${destdir}/ecl/ --libdir=${destdir} --build=${build_alias} \
+	--host=${host_alias} --enable-large-config \
+        CC="${CC} ${PICFLAG}" CFLAGS="$CFLAGS" LDFLAGS="$LDFLAGS" CPPFLAGS="$CPPFLAGS" \
+        ${boehm_configure_flags})
+      ECL_BOEHM_GC_HEADER='ecl/gc/gc.h'
+    else
+      AC_MSG_ERROR([Unable to create 'gc' directory])
+    fi
+    ;;
+  system)
+    AC_CHECK_HEADER([gc.h],[ECL_BOEHM_GC_HEADER='gc.h'],[],[])
+    if test -z "$ECL_BOEHM_GC_HEADER"; then
+       AC_CHECK_HEADER([gc/gc.h],[ECL_BOEHM_GC_HEADER='gc/gc.h'],[],[])
+    fi
+    if test -z "$ECL_BOEHM_GC_HEADER"; then
+       AC_MSG_ERROR([Boehm-Weiser garbage collector's headers not found])
+    fi
+    ;;
+  no)
+    ECL_BOEHM_GC_HEADER='none';;
+  *)
+    AC_MSG_ERROR([Not a valid argument for --enable-boehm $enable_boehm]);;
+esac
+])

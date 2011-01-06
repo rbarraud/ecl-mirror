@@ -40,7 +40,7 @@
 	  ;; either NIL or T), we lose a lot of information.
 	  (make-c1form* 'BLOCK
 			:local-vars (list blk-var)
-			:type (type-or (blk-type blk) (c1form-type body))
+			:type (values-type-or (blk-type blk) (c1form-type body))
 			:args blk body)
 	  body))))
 
@@ -84,24 +84,26 @@
       (unless blk
 	(cmperr "The block ~s is undefined." name))
       (let* ((val (c1expr (second args)))
-	     (var (blk-var blk))
+	     (var nil)
 	     (type T))
 	(cond (ccb (setf (blk-ref-ccb blk) t
 			 type 'CCB
+			 var (blk-var blk)
 			 (var-kind var) 'CLOSURE
-			 (var-ref-ccb var) T)
-		   (incf (var-ref var)))
+			 (var-ref-ccb var) T))
 	      (clb (setf (blk-ref-clb blk) t
-			 type 'CLB)
-		   (incf (var-ref var)))
-	      (unw (setf type 'UNWIND-PROTECT)
-		   (incf (var-ref var))))
+			 type 'CLB
+			 var (blk-var blk)))
+	      (unw (setf type 'UNWIND-PROTECT
+			 var (blk-var blk))))
 	(incf (blk-ref blk))
-	(setf (blk-type blk) (type-or (blk-type blk) (c1form-primary-type val)))
-	(add-to-read-nodes var (make-c1form* 'RETURN-FROM :type 'T
-					     :args blk type val))))))
+	(setf (blk-type blk) (values-type-or (blk-type blk) (c1form-type val)))
+	(let ((output (make-c1form* 'RETURN-FROM :type 'T
+				    :args blk type val var)))
+	  (when var (add-to-read-nodes var output))
+	  output)))))
 
-(defun c2return-from (blk type val)
+(defun c2return-from (blk type val var)
   (case type
     (CCB
      (let ((*destination* 'VALUES)) (c2expr* val))
@@ -113,11 +115,3 @@
 	     (*exit* (blk-exit blk)))
 	 (c2expr val))))
   )
-
-;;; ----------------------------------------------------------------------
-
-(put-sysprop 'BLOCK 'C1SPECIAL 'c1block)
-(put-sysprop 'BLOCK 'C2 'c2block)
-
-(put-sysprop 'RETURN-FROM 'C1SPECIAL 'c1return-from)
-(put-sysprop 'RETURN-FROM 'C2 'c2return-from)

@@ -82,19 +82,18 @@ The function thus belongs to the type of functions that ecl_make_cfun accepts."
   (when *current-function*
     (push fun (fun-child-funs *current-function*)))
   (let* ((*current-function* fun)
-	 (*cmp-env* (cmp-env-mark CB/LB))
+	 (*cmp-env* (setf (fun-cmp-env fun) (cmp-env-mark CB/LB)))
 	 (setjmps *setjmps*)
 	 (decl (si::process-declarations (rest lambda-list-and-body)))
+	 (global (and (assoc 'SI::C-GLOBAL decl) (setf (fun-global fun) T)))
+	 (no-entry (assoc 'SI::C-LOCAL decl))
 	 (lambda-expr (c1lambda-expr lambda-list-and-body
 				     (si::function-block-name name)))
 	 (children (fun-child-funs fun))
-	 (global (and (assoc 'SI::C-GLOBAL decl) 'T))
-	 (debug (search-optimization-quality decl 'debug))
-	 (no-entry (assoc 'SI::C-LOCAL decl))
 	 cfun exported minarg maxarg)
-    (when (and no-entry (>= debug 2))
+    (when (and no-entry (policy-debug-ihs-frame))
       (setf no-entry nil)
-      (cmpnote "Ignoring SI::C-LOCAL declaration for ~A when DEBUG is ~D" name debug))
+      (cmpnote "Ignoring SI::C-LOCAL declaration for~%~4I~A~%because the debug level is large" name))
     (unless (eql setjmps *setjmps*)
       (setf (c1form-volatile lambda-expr) t))
     (setf (fun-lambda fun) lambda-expr)
@@ -116,14 +115,12 @@ The function thus belongs to the type of functions that ecl_make_cfun accepts."
 	(multiple-value-setq (minarg maxarg)
 	  (lambda-form-allowed-nargs lambda-expr)))
     (setf (fun-cfun fun) cfun
-	  (fun-global fun) global
 	  (fun-exported fun) exported
 	  (fun-closure fun) nil
 	  (fun-minarg fun) minarg
 	  (fun-maxarg fun) maxarg
 	  (fun-description fun) name
-	  (fun-no-entry fun) no-entry
-	  (fun-debug fun) debug)
+	  (fun-no-entry fun) no-entry)
     (reduce #'add-referred-variables-to-function
 	    (mapcar #'fun-referred-vars children)
 	    :initial-value fun)
@@ -147,29 +144,6 @@ The function thus belongs to the type of functions that ecl_make_cfun accepts."
 (defun cmp-process-lambda-list (list)
   (handler-case (si::process-lambda-list list 'function)
     (error (c) (cmperr "Illegal lambda list ~S" list))))
-
-(defun extract-type-checks (function-name type-checks type-declarations other-decls)
-  ;; We generate automatic type checks for function arguments that are
-  ;; declared. Note that not all type declarations can be checked
-  ;; (take for instance (type (function (t t) t) foo))
-  (flet ((required-type-check (name other-decls)
-	   (loop for decl in other-decls
-		 never (and (consp decl)
-			   (eq (first decl) 'si::no-check-type)
-			   (member name (rest decl))))))
-    (when (policy-automatic-check-type-p)
-      (loop with checked-vars = '()
-	    for var in type-checks
-	    for name = (var-name var)
-	    for type = (cdr (assoc name type-declarations))
-	    when (and type (required-type-check name other-decls))
-	    collect
-	    (progn (push name checked-vars)
-		   `(optional-check-type ,name ,type))
-	    finally
-	    (when checked-vars
-	      (cmpnote "In ~:[an anonymous function~;function ~:*~A~], checking types of argument~@[s~]~{ ~A~}."
-		       function-name checked-vars))))))
 
 (defun c1lambda-expr (lambda-expr
                       &optional (block-name nil)
@@ -242,9 +216,9 @@ The function thus belongs to the type of functions that ecl_make_cfun accepts."
 	      (third specs) init
 	      (fourth specs) flag)))
 
-    ;; Prepend optional checks for input arguments
-    (setf body (nconc (extract-type-checks block-name type-checks ts other-decls)
-		      body))
+    ;; Make other declarations take effect right now
+    (setf *cmp-env* (reduce #'add-one-declaration other-decls
+                            :initial-value *cmp-env*))
 
     ;; After creating all variables and processing the initalization
     ;; forms, we wil process the body. However, all free declarations,
@@ -252,43 +226,50 @@ The function thus belongs to the type of functions that ecl_make_cfun accepts."
     ;; arguments, have to be applied to the body. At the same time, we
     ;; replace &aux variables with a LET* form that defines them.
     (let* ((declarations other-decls)
-	   (new-variables (cmp-env-new-variables *cmp-env* old-env))
-	   (new-variable-names (mapcar #'var-name new-variables)))
+           (type-checks (extract-lambda-type-checks block-name requireds optionals
+                                                    keywords ts other-decls))
+           (type-check-forms (car type-checks))
+           (let-vars (loop for spec on (nconc (cdr type-checks) aux-vars)
+                        by #'cddr
+                        for name = (first spec)
+                        for init = (second spec)
+                        collect (list name init)))
+           (new-variables (cmp-env-new-variables *cmp-env* old-env))
+	   (already-declared-names (set-difference (mapcar #'var-name new-variables)
+                                                   (mapcar #'car let-vars))))
       ;; Gather declarations for &aux variables, either special...
-      (when (setq ss (set-difference ss new-variable-names))
-	(push `(special ,@ss) declarations))
+      (let ((specials (set-difference ss already-declared-names)))
+        (when specials
+          (push `(special ,@specials) declarations)))
       ;; ...ignorable...
-      (when (setq is (loop for (var . expected-uses) in is
-                        unless (member var new-variable-names)
-                        collect var))
-	(push `(ignorable ,@is) declarations))
+      (let ((ignorables (loop for (var . expected-uses) in is
+                           unless (member var already-declared-names)
+                           collect var)))
+        (when ignorables
+          (push `(ignorable ,@ignorables) declarations)))
       ;; ...or type declarations
       (loop for (var . type) in ts
-	    unless (member var new-variable-names)
+	    unless (member var already-declared-names)
 	    do (push `(type ,type ,var) declarations))
-      ;; ...and create the enclosing LET* form
-      (setq body
-	    (cond (aux-vars
-		   (let ((let nil))
-		     (do ((specs aux-vars (cddr specs)))
-			 ((endp specs))
-		       (let ((var (first specs))
-			     (init (second specs)))
-			 (setq let (cons (if init (list var init) var) let))))
-		     (c1expr `(let* ,(nreverse let)
-			       (declare ,@declarations)
-			       ,@body))))
-		  (declarations
-		   (c1expr `(locally (declare ,@declarations) ,@body)))
-		  (t
-		   (c1progn body))))
+      ;; ...create the enclosing LET* form for the &aux variables
+      (when (or let-vars declarations)
+        (setq body `((let* ,let-vars
+                       (declare ,@declarations)
+                       ,@body))))
+      ;; ...wrap around the optional type checks
+      (setq body (nconc type-check-forms body))
+      ;; ...now finally compile the body with the type checks
+      (let ((*cmp-env* (cmp-env-copy *cmp-env*)))
+        (setf body (c1progn body)))
+      ;;
+      ;; ...and verify whether all variables are used.
       (dolist (var new-variables)
-	(check-vref var))
+        (check-vref var))
       (make-c1form* 'LAMBDA
-		    :local-vars new-variables
- 		    :args (list requireds optionals rest key-flag keywords
-				allow-other-keys)
-		    doc body))))
+                    :local-vars new-variables
+                    :args (list requireds optionals rest key-flag keywords
+                                allow-other-keys)
+                    doc body))))
 
 (defun lambda-form-allowed-nargs (lambda)
   (let ((minarg 0)
@@ -316,7 +297,7 @@ The function thus belongs to the type of functions that ecl_make_cfun accepts."
 |#
 
 (defun c2lambda-expr
-    (lambda-list body cfun fname use-narg fname-in-ihs-p
+    (lambda-list body cfun fname use-narg
                  &optional closure-type local-entry-p
 		 &aux (requireds (first lambda-list))
 		 (optionals (second lambda-list))
@@ -327,6 +308,9 @@ The function thus belongs to the type of functions that ecl_make_cfun accepts."
 		 (nopt (/ (length optionals) 3))
 		 (nkey (/ (length keywords) 4))
 		 (varargs (or optionals rest keywords allow-other-keys))
+                 (fname-in-ihs-p (or (policy-debug-variable-bindings)
+                                     (and (policy-debug-ihs-frame)
+                                          fname)))
 		 simple-varargs
 		 (*permanent-data* t)
 		 (*unwind-exit* *unwind-exit*)
@@ -351,7 +335,7 @@ The function thus belongs to the type of functions that ecl_make_cfun accepts."
     (baboon))
 
   ;; check arguments
-  (unless (or local-entry-p (not (compiler-check-args)))
+  (unless (or local-entry-p (not (policy-check-nargs)))
     (incf *inline-blocks*)
     (if (and use-narg (not varargs))
 	(wt-nl "if (ecl_unlikely(narg!=" nreq ")) FEwrong_num_arguments_anonym();")
@@ -433,14 +417,12 @@ The function thus belongs to the type of functions that ecl_make_cfun accepts."
 
     (when fname-in-ihs-p
       (wt-nl "{")
+      (setf *ihs-used-p* t)
       (push 'IHS *unwind-exit*)
-      (cond ((>= *debug-fun* 3)
-             (build-debug-lexical-env (reverse requireds) t)
-             (wt-nl "ecl_ihs_push(cl_env_copy,&ihs," (add-symbol fname)
-                    ",_ecl_debug_env);"))
-            (t
-             (wt-nl "ecl_ihs_push(cl_env_copy,&ihs," (add-symbol fname)
-                    ",Cnil);"))))
+      (when (policy-debug-variable-bindings)
+        (build-debug-lexical-env (reverse requireds) t))
+      (wt-nl "ecl_ihs_push(cl_env_copy,&ihs," (add-symbol fname)
+             ",_ecl_debug_env);"))
 
     (setq *lcl* lcl))
 
@@ -452,7 +434,7 @@ The function thus belongs to the type of functions that ecl_make_cfun accepts."
     ;; which is what we do here.
     (let ((va-arg-loc (if simple-varargs 'VA-ARG 'CL-VA-ARG)))
       ;; counter for optionals
-      (wt "{int i=" nreq ";")
+      (wt-nl "{int i=" nreq ";")
       (do ((opt optionals (cdddr opt)))
 	  ((endp opt))
 	(wt-nl "if (i >= narg) {")

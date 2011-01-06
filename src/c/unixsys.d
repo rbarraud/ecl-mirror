@@ -15,20 +15,20 @@
     See file '../Copyright' for full details.
 */
 
-#include <ecl/ecl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <fcntl.h>
-#include <ecl/internal.h>
-#if defined(__MINGW32__) || defined (_MSC_VER)
-#include <windows.h>
+#if !defined(_MSC_VER)
+# include <unistd.h>
 #endif
-#ifdef HAVE_UNISTD_H
-#include <unistd.h>
+#include <ecl/ecl.h>
+#include <ecl/internal.h>
+#if defined(ECL_MS_WINDOWS_HOST)
+# include <windows.h>
 #endif
 #ifdef HAVE_SYS_WAIT_H
-#include <sys/wait.h>
+# include <sys/wait.h>
 #endif
 
 /* Mingw defines 'environ' to be a macro instead of a global variable. */
@@ -55,11 +55,21 @@ si_getpid(void)
 }
 
 cl_object
+si_getuid(void)
+{
+#if defined(ECL_MS_WINDOWS_HOST)
+        @(return MAKE_FIXNUM(0));
+#else
+	@(return ecl_make_integer(getuid()));
+#endif
+}
+
+cl_object
 si_make_pipe()
 {
 	cl_object output;
 	int fds[2], ret;
-#if defined(_MSC_VER) || defined(__MINGW32__)
+#if defined(ECL_MS_WINDOWS_HOST)
 	ret = _pipe(fds, 4096, _O_BINARY);
 #else
 	ret = pipe(fds);
@@ -131,7 +141,7 @@ make_external_process(cl_object pid, cl_object input, cl_object output)
         return cl_funcall(4, @'ext::make-external-process', pid, input, output);
 }
 
-#if defined(_MSC_VER) || defined(__MINGW32__)
+#if defined(ECL_MS_WINDOWS_HOST)
 cl_object
 si_close_windows_handle(cl_object h)
 {
@@ -175,7 +185,7 @@ make_windows_handle(HANDLE h)
                                   4, code);
         } else {
                 cl_object exit_status = Cnil;
-#if defined(_MSC_VER) || defined(__MINGW32__)
+#if defined(ECL_MS_WINDOWS_HOST)
                 HANDLE *hProcess = ecl_foreign_data_pointer_safe(process_or_pid);
                 DWORD exitcode;
                 int ok;
@@ -233,7 +243,7 @@ make_windows_handle(HANDLE h)
 @
 	command = si_copy_to_simple_base_string(command);
 	argv = cl_mapcar(2, @'si::copy-to-simple-base-string', argv);
-#if defined(__MINGW32__) || defined (_MSC_VER)
+#if defined(ECL_MS_WINDOWS_HOST)
 {
 	BOOL ok;
 	STARTUPINFO st_info;
@@ -275,7 +285,8 @@ make_windows_handle(HANDLE h)
 					     DUPLICATE_CLOSE_SOURCE |
 					     DUPLICATE_SAME_ACCESS);
 			if (ok) {
-				parent_write = _open_osfhandle(tmp, _O_WRONLY /*| _O_TEXT*/);
+				parent_write = _open_osfhandle((intptr_t)tmp,
+                                                               _O_WRONLY /*| _O_TEXT*/);
 				if (parent_write < 0)
 					printf("open_osfhandle failed\n");
 			}
@@ -287,7 +298,9 @@ make_windows_handle(HANDLE h)
 		cl_object input_stream = ecl_symbol_value(@'*standard-input*');
 		int stream_handle = ecl_stream_to_handle(input_stream, 0);
 		if (stream_handle >= 0)
-			DuplicateHandle(current, _get_osfhandle(stream_handle) /*GetStdHandle(STD_INPUT_HANDLE)*/,
+			DuplicateHandle(current,
+                                        (HANDLE)_get_osfhandle(stream_handle)
+                                        /*GetStdHandle(STD_INPUT_HANDLE)*/,
 					current, &child_stdin, 0, TRUE,
 					DUPLICATE_SAME_ACCESS);
 		else
@@ -308,7 +321,8 @@ make_windows_handle(HANDLE h)
 					     DUPLICATE_CLOSE_SOURCE |
 					     DUPLICATE_SAME_ACCESS);
 			if (ok) {
-				parent_read = _open_osfhandle(tmp, _O_RDONLY /*| _O_TEXT*/);
+				parent_read = _open_osfhandle((intptr_t)tmp,
+                                                              _O_RDONLY /*| _O_TEXT*/);
 				if (parent_read < 0)
 					printf("open_osfhandle failed\n");
 			}
@@ -320,7 +334,9 @@ make_windows_handle(HANDLE h)
 		cl_object output_stream = ecl_symbol_value(@'*standard-output*');
 		int stream_handle = ecl_stream_to_handle(output_stream, 1);
 		if (stream_handle >= 0)
-			DuplicateHandle(current, _get_osfhandle(stream_handle) /*GetStdHandle(STD_OUTPUT_HANDLE)*/,
+			DuplicateHandle(current,
+                                        (HANDLE)_get_osfhandle(stream_handle)
+                                        /*GetStdHandle(STD_OUTPUT_HANDLE)*/,
 					current, &child_stdout, 0, TRUE,
 					DUPLICATE_SAME_ACCESS);
 		else
@@ -342,7 +358,9 @@ make_windows_handle(HANDLE h)
 		cl_object error_stream = ecl_symbol_value(@'*error-output*');
 		int stream_handle = ecl_stream_to_handle(error_stream, 1);
 		if (stream_handle >= 0)
-			DuplicateHandle(current, _get_osfhandle(stream_handle) /*GetStdHandle(STD_ERROR_HANDLE)*/,
+			DuplicateHandle(current,
+                                        (HANDLE)_get_osfhandle(stream_handle)
+                                        /*GetStdHandle(STD_ERROR_HANDLE)*/,
 					current, &child_stderr, 0, TRUE,
 					DUPLICATE_SAME_ACCESS);
 		else

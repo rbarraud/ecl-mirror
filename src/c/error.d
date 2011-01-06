@@ -21,8 +21,8 @@
 #include <errno.h>
 #include <signal.h>
 #include <stdlib.h>
-#if defined(__MINGW32__) || defined(_MSC_VER) || defined(cygwin)
-#include <windows.h>
+#if defined(ECL_MS_WINDOWS_HOST) || defined(cygwin)
+# include <windows.h>
 #endif
 #include <ecl/internal.h>
 
@@ -35,14 +35,28 @@ cl_symbol_or_object(cl_object x)
 }
 
 void
+_ecl_unexpected_return()
+{
+        ecl_internal_error(
+"*** \n"
+"*** A call to ERROR returned without handling the error.\n"
+"*** This should have never happened and is usually a signal\n"
+"*** that the debugger or the universal error handler were\n"
+"*** improperly coded or altered. Please contact the maintainers\n"
+"***\n");
+}
+
+void
 ecl_internal_error(const char *s)
 {
         int saved_errno = errno;
-	printf("\nInternal or unrecoverable error in:\n%s\n", s);
+	fprintf(stderr, "\nInternal or unrecoverable error in:\n%s\n", s);
         if (saved_errno) {
-                printf("  [%d: %s]\n", saved_errno, strerror(saved_errno));
+                fprintf(stderr, "  [%d: %s]\n", saved_errno,
+                        strerror(saved_errno));
         }
-	fflush(stdout);
+	fflush(stderr);
+        si_dump_c_backtrace(MAKE_FIXNUM(32));
 #ifdef SIGIOT
 	signal(SIGIOT, SIG_DFL); /* avoid getting into a loop with abort */
 #endif
@@ -94,6 +108,7 @@ FEerror(const char *s, int narg, ...)
 		Cnil,                    /*  not correctable  */
 		make_constant_base_string(s),	 /*  condition text  */
 		cl_grab_rest_args(args));
+        _ecl_unexpected_return();
 }
 
 cl_object
@@ -224,11 +239,17 @@ FEclosed_stream(cl_object strm)
 	cl_error(3, @'stream-error', @':stream', strm);
 }
 
+cl_object
+si_signal_type_error(cl_object value, cl_object type)
+{
+	return cl_error(5, @'type-error', @':expected-type', type,
+                        @':datum', value);
+}
+
 void
 FEwrong_type_argument(cl_object type, cl_object value)
 {
-        type = cl_symbol_or_object(type);
-	cl_error(5, @'type-error', @':datum', value, @':expected-type', type);
+        si_signal_type_error(value, cl_symbol_or_object(type));
 }
 
 void
@@ -345,6 +366,12 @@ FEundefined_function(cl_object fname)
 	cl_error(3, @'undefined-function', @':name', fname);
 }
 
+void
+FEprint_not_readable(cl_object x)
+{
+	cl_error(3, @'print-not-readable', @':object', x);
+}
+
 /*************
  * Shortcuts *
  *************/
@@ -398,9 +425,33 @@ FEinvalid_function_name(cl_object fname)
 }
 
 /*      bootstrap version                */
+static int recursive_error = 0;
+
 static cl_object
-universal_error_handler(cl_narg narg, cl_object c, cl_object err, cl_object args, ...)
+universal_error_handler(cl_object continue_string, cl_object datum,
+                        cl_object args)
 {
+        const cl_env_ptr the_env = ecl_process_env();
+        cl_object stream;
+        if (recursive_error)
+                goto ABORT;
+        recursive_error = 1;
+        stream = cl_core.error_output;
+        if (!Null(stream)) {
+                ecl_bds_bind(the_env, @'*print-readably*', Cnil);
+                ecl_bds_bind(the_env, @'*print-level*', MAKE_FIXNUM(3));
+                ecl_bds_bind(the_env, @'*print-length*', MAKE_FIXNUM(3));
+                ecl_bds_bind(the_env, @'*print-circle*', Cnil);
+                ecl_bds_bind(the_env, @'*print-base*', MAKE_FIXNUM(10));
+                writestr_stream("\n;;; Unhandled lisp initialization error",
+                                stream);
+                writestr_stream("\n;;; Message:\n", stream);
+                si_write_ugly_object(datum, stream);
+                writestr_stream("\n;;; Arguments:\n", stream);
+                si_write_ugly_object(datum, args);
+                ecl_bds_unwind_n(the_env, 5);
+        }
+ ABORT:
 	ecl_internal_error("\nLisp initialization error.\n");
 }
 
@@ -430,15 +481,17 @@ FElibc_error(const char *msg, int narg, ...)
 {
 	cl_va_list args;
 	cl_object rest;
+        const char *error = strerror(errno);
 
 	cl_va_start(args, narg, narg, 0);
 	rest = cl_grab_rest_args(args);
 
+        printf("%s\n", error);
 	FEerror("~?~%Explanation: ~A.", 3, make_constant_base_string(msg), rest,
-		make_constant_base_string(strerror(errno)));
+		make_constant_base_string(error));
 }
 
-#if defined(__MINGW32__) || defined(_MSC_VER) || defined(cygwin)
+#if defined(ECL_MS_WINDOWS_HOST) || defined(cygwin)
 void
 FEwin32_error(const char *msg, int narg, ...)
 {
@@ -469,8 +522,10 @@ FEwin32_error(const char *msg, int narg, ...)
 @(defun error (eformat &rest args)
 @
 	ecl_enable_interrupts();
-	return funcall(4, @'si::universal-error-handler', Cnil, eformat,
-		       cl_grab_rest_args(args));
+	funcall(4, @'si::universal-error-handler', Cnil, eformat,
+                cl_grab_rest_args(args));
+	_ecl_unexpected_return();
+	@(return);
 @)
 
 @(defun cerror (cformat eformat &rest args)
@@ -483,5 +538,7 @@ FEwin32_error(const char *msg, int narg, ...)
 void
 init_error(void)
 {
-	ecl_def_c_function_va(@'si::universal-error-handler', universal_error_handler);
+	ecl_def_c_function(@'si::universal-error-handler',
+                           (cl_objectfn_fixed)universal_error_handler,
+                           3);
 }

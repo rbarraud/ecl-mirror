@@ -15,6 +15,7 @@
 (in-package "COMPILER")
 
 (defun c1expr (form)
+  (let ((*current-form* form))
   (setq form (catch *cmperr-tag*
     (cond ((symbolp form)
 	   (setq form (chk-symbol-macrolet form))
@@ -36,7 +37,7 @@
 		   ((and (consp fun) (eq (car fun) 'LAMBDA))
 		    (c1funcall form))
 		   (t (cmperr "~s is not a legal function name." fun)))))
-	  (t (c1constant-value form :always t)))))
+	  (t (c1constant-value form :always t))))))
   (if (eq form '*cmperr-tag*)
       (c1nil)
       form))
@@ -47,16 +48,9 @@
 (defun c1t () *c1t*)
 
 (defun c1call-symbol (fname args &aux fd)
-  (cond ((setq fd (get-sysprop fname 'c1special)) (funcall fd args))
-	((c1call-local fname args))
-	((setq fd (cmp-env-search-macro fname))
-	 (c1expr (cmp-expand-macro fd (list* fname args))))
-	((and (setq fd (get-sysprop fname 'C1))
-	      (inline-possible fname))
+  (cond ((setq fd (gethash fname *c1-dispatch-table*))
 	 (funcall fd args))
-	((and (setq fd (get-sysprop fname 'C1CONDITIONAL))
-	      (inline-possible fname)
-	      (funcall fd args)))
+	((c1call-local fname args))
 	((and (setq fd (compiler-macro-function fname))
 	      (inline-possible fname)
 	      (let ((success nil))
@@ -64,7 +58,7 @@
 		  (cmp-expand-macro fd (list* fname args)))
 		success))
 	 (c1expr fd))
-	((setq fd (macro-function fname))
+	((setq fd (cmp-macro-function fname))
 	 (c1expr (cmp-expand-macro fd (list* fname args))))
 	(t (c1call-global fname args))))
 
@@ -88,7 +82,10 @@
 		       (pop arg-types)
 		       (pop args))))
 	    (setq forms (nreverse fl))))
-	(make-c1form* 'CALL-LOCAL :sp-change t :type return-type
+	(make-c1form* 'CALL-LOCAL
+                      :sp-change t ; conservative estimate
+                      :side-effects t ; conservative estimate
+                      :type return-type
 		      :args fun forms)))))
 
 (defun c1call-global (fname args)
@@ -103,28 +100,25 @@
 |#
 	  (t
 	   (let* ((forms (c1args* args))
-		  (return-type (propagate-types fname forms args)))
+		  (return-type (propagate-types fname forms)))
 	     (make-c1form* 'CALL-GLOBAL
 			   :sp-change (function-may-change-sp fname)
+                           :side-effects (function-may-have-side-effects fname)
 			   :type return-type
 			   :args fname forms
                            ;; loc and type are filled by c2expr
                            ))))))
 
 (defun c2expr (form)
-  (let* ((*compile-file-truename* (c1form-file form))
-         (*compile-file-position* (c1form-file-position form))
-         (*current-toplevel-form* (c1form-toplevel-form form))
-         (*current-form* (c1form-form form))
-         (*current-c2form* form)
-         (name (c1form-name form))
-         (args (c1form-args form))
-         (dispatch (get-sysprop name 'C2)))
-    (if (or (eq name 'LET) (eq name 'LET*))
-        (let ((*volatile* (c1form-volatile* form)))
-          (declare (special *volatile*))
-          (apply dispatch args))
-        (apply dispatch args))))
+  (with-c1form-env (form form)
+    (let* ((name (c1form-name form))
+           (args (c1form-args form))
+           (dispatch (gethash name *c2-dispatch-table*)))
+      (if (or (eq name 'LET) (eq name 'LET*))
+          (let ((*volatile* (c1form-volatile* form)))
+            (declare (special *volatile*))
+            (apply dispatch args))
+          (apply dispatch args)))))
 
 (defun c2expr* (form)
   (let* ((*exit* (next-label))
@@ -168,7 +162,7 @@
 	(return)))))
 
 (defun c1args* (forms)
-  (mapcar #'(lambda (form) (c1expr form)) forms))
+  (mapcar #'c1expr forms))
 
 ;;; ----------------------------------------------------------------------
 
@@ -192,9 +186,3 @@
       `(progn
 	 (defun ,name ,vars ,@body)
 	 (define-compiler-macro ,name ,temps (list* 'LET ,binding ',body))))))
-
-;;; ----------------------------------------------------------------------
-
-(put-sysprop 'PROGN 'C1SPECIAL 'c1progn)
-(put-sysprop 'PROGN 'C2 'c2progn)
-(put-sysprop 'EXT:WITH-BACKEND 'C1SPECIAL 'c1with-backend)

@@ -87,23 +87,6 @@
 	  (t
 	   (c1funcall (list* '#'APPLY args))))))
 
-(defun c1rplaca (args)
-  (check-args-number 'RPLACA args 2 2)
-  (make-c1form* 'RPLACA :args (c1args* args)))
-
-(defun c2rplaca (args)
-  (let* ((*inline-blocks* 0)
-         (*temp* *temp*)
-         (args (coerce-locs (inline-args args)))
-         (x (first args))
-         (y (second args)))
-    (when (safe-compile)
-      (wt-nl "if (ecl_unlikely(ATOM(" x ")))"
-             "FEtype_error_cons(" x ");"))
-    (wt-nl "ECL_CONS_CAR(" x ") = " y ";")
-    (unwind-exit x)
-    (close-inline-blocks)))
-
 (defun c1rplacd (args)
   (check-args-number 'RPLACD args 2 2)
   (make-c1form* 'RPLACD :args (c1args* args)))
@@ -120,94 +103,6 @@
     (wt-nl "ECL_CONS_CDR(" x ") = " y ";")
     (unwind-exit x)
     (close-inline-blocks)))
-
-(defun c1member (args)
-  (check-args-number 'MEMBER args 2)
-  (cond ((endp (cddr args))
-	 (make-c1form* 'MEMBER!2 :args 'EQL (c1args* args)))
-	((and (eq (third args) :test)
-	      (= (length args) 4)       ; Beppe
-	      (member (fourth args) '('EQ #'EQ 'EQUAL #'EQUAL 'EQL #'EQL)
-		      :test #'EQUAL))	; arg4 = (QUOTE EQ)
-	 (make-c1form* 'MEMBER!2 :args (second (fourth args))
-		       (c1args* (list (car args) (second args)))))
-	(t
-	 (c1call-global 'MEMBER args))))
-
-(defun c2member!2 (fun args)
-  (let ((*inline-blocks* 0)
-        (*temp* *temp*))
-    (unwind-exit
-     (produce-inline-loc (inline-args args) '(T T) '(:object)
-                         (case fun
-                           (EQ "si_memq(#0,#1)")
-                           (EQL "ecl_memql(#0,#1)")
-                           (EQUAL "ecl_member(#0,#1)"))
-                         nil ; side effects?
-                         t)) ; one liner?
-    (close-inline-blocks)))
-
-(defun c1assoc (args)
-  (check-args-number 'ASSOC args 2)
-  (cond ((endp (cddr args))
-	 (make-c1form* 'ASSOC!2 :args 'EQL (c1args* args)))
-	((and (eq (third args) ':TEST)
-	      (= (length args) 4)       ; Beppe
-	      (member (fourth args) '('EQ #'EQ 'EQUAL #'EQUAL
-				      'EQUALP #'EQUALP 'EQL #'EQL)
-		      :test 'EQUAL))
-	 (make-c1form* 'ASSOC!2 :args (second (fourth args))
-		       (c1args* (list (car args) (second args)))))
-	(t
-	 (c1call-global 'ASSOC args))))
-
-(defun c2assoc!2 (fun args)
-  (let* ((*inline-blocks* 0)
-         (*temp* *temp*))
-    (unwind-exit
-     (produce-inline-loc (inline-args args) '(T T) '(:object)
-                         (case fun
-                           (eq "ecl_assq(#0,#1)")
-                           (eql "ecl_assql(#0,#1)")
-                           (equal "ecl_assoc(#0,#1)")
-                           (equalp "ecl_assqlp(#0,#1)"))
-                         nil ; side effects?
-                         t
-                         ))
-    (close-inline-blocks)))
-
-(defun co1nth (args)
-  (and (not (endp args))
-       (not (endp (cdr args)))
-       (endp (cddr args))
-       (numberp (car args))
-       (<= 0 (car args) 7)
-       (c1expr (case (car args)
-		     (0 (cons 'CAR (cdr args)))
-		     (1 (cons 'CADR (cdr args)))
-		     (2 (cons 'CADDR (cdr args)))
-		     (3 (cons 'CADDDR (cdr args)))
-		     (4 (list 'CAR (cons 'CDDDDR (cdr args))))
-		     (5 (list 'CADR (cons 'CDDDDR (cdr args))))
-		     (6 (list 'CADDR (cons 'CDDDDR (cdr args))))
-		     (7 (list 'CADDDR (cons 'CDDDDR (cdr args))))
-		     ))))
-
-(defun co1nthcdr (args)
-  (and (not (endp args))
-       (not (endp (cdr args)))
-       (endp (cddr args))
-       (numberp (car args))
-       (<= 0 (car args) 7)
-       (c1expr (case (car args)
-		 (0 (second args))
-		 (1 (cons 'CDR (cdr args)))
-		 (2 (cons 'CDDR (cdr args)))
-		 (3 (cons 'CDDDR (cdr args)))
-		 (4 (cons 'CDDDDR (cdr args)))
-		 (5 (list 'CDR (cons 'CDDDDR (cdr args))))
-		 (6 (list 'CDDR (cons 'CDDDDR (cdr args))))
-		 (7 (list 'CDDDR (cons 'CDDDDR (cdr args))))))))
 
 ;;----------------------------------------------------------------------
 ;; We transform BOOLE into the individual operations, which have
@@ -237,87 +132,13 @@
 
 ;----------------------------------------------------------------------
 
-(defun co1coerce (args &aux expr type (info (make-info)))
-  (and args (cdr args) (endp (cddr args))
-       (let ((expr (first args))
-	     (type (second args)))
-	 (and (listp type)
-	      (eq (car type) 'QUOTE)
-	      (case (second type)
-		((CHARACTER BASE-CHAR) (c1expr `(CHARACTER ,expr)))
-		(FLOAT (c1expr `(FLOAT ,expr)))
-		(SHORT-FLOAT (c1expr `(FLOAT ,expr 0.0S0)))
-		(SINGLE-FLOAT (c1expr `(FLOAT ,expr 0.0F0)))
-		(DOUBLE-FLOAT (c1expr `(FLOAT ,expr 0.0D0)))
-		(LONG-FLOAT (c1expr `(FLOAT ,expr 0.0L0)))
-                )))))
-
-;----------------------------------------------------------------------
-;; turn repetitious cons's into a list*
-
-(defun co1cons (args &aux temp)
-  (labels ((cons-to-lista (x)
-	     (let ((tem (last x)))
-	       (if (and (consp tem)
-			(consp (car tem))
-			(eq (caar tem) 'CONS)
-			(eql (length (cdar tem)) 2))
-		   (cons-to-lista (append (butlast x) (cdar tem)))
-		   x))))
-    (and (eql (length args) 2)
-	 (not (eq args (setq temp (cons-to-lista args))))
-	 (c1expr (if (equal '(nil) (last temp))
-		     (cons 'LIST (butlast temp))
-		     (cons 'LIST* temp))))))
-
-;----------------------------------------------------------------------
-
 ;; Return the most particular type we can EASILY obtain from x.  
 (defun result-type (x)
   (cond ((symbolp x)
 	 (c1form-primary-type (c1expr x)))
 	((constantp x)
-	 (type-filter (type-of x)))
+	 (type-of x))
 	((and (consp x) (eq (car x) 'the))
-	 (type-filter (second x)))
+	 (second x))
 	(t t)))
 
-;----------------------------------------------------------------------
-
-;;; Look for inline expansion of LDB1 in sysfun.lsp
-
-(defun co1ldb (args &aux (arg1 (first args))
-		    (len (integer-length most-positive-fixnum))
-		    size pos)
-    (and (consp arg1)
-	 (eq 'BYTE (car arg1))
-	 (integerp (setq size (second arg1)))
-	 (integerp (setq pos (third arg1)))
-	 (<= (+ size pos) len)
-	 (subtypep (result-type (second args)) 'FIXNUM)
-	 (c1expr `(the fixnum (ldb1 ,size ,pos ,(second args))))))
-
-;;; ----------------------------------------------------------------------
-
-(put-sysprop 'princ 'C1 'c1princ)
-(put-sysprop 'c2princ 'C2 'c2princ)
-(put-sysprop 'terpri 'C1 'c1terpri)
-
-(put-sysprop 'apply 'C1 'c1apply)
-
-(put-sysprop 'rplaca 'C1 'c1rplaca)
-(put-sysprop 'rplaca 'C2 'c2rplaca)
-(put-sysprop 'rplacd 'C1 'c1rplacd)
-(put-sysprop 'rplacd 'C2 'c2rplacd)
-
-(put-sysprop 'member 'C1 'c1member)
-(put-sysprop 'member!2 'C2 'c2member!2)
-(put-sysprop 'assoc 'C1 'c1assoc)
-(put-sysprop 'assoc!2 'C2 'c2assoc!2)
-
-(put-sysprop 'nth 'C1CONDITIONAL 'co1nth)
-(put-sysprop 'nthcdr 'C1CONDITIONAL 'co1nthcdr)
-
-(put-sysprop 'coerce 'C1CONDITIONAL 'co1coerce)
-(put-sysprop 'cons 'C1CONDITIONAL 'co1cons)
-(put-sysprop 'ldb 'C1CONDITIONAL 'co1ldb)

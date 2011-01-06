@@ -235,10 +235,6 @@ ecl_alloc_object(cl_type t)
 	  return MAKE_FIXNUM(0); /* Immediate fixnum */
 	case t_character:
 	  return CODE_CHAR('\0'); /* Immediate character */
-#ifdef ECL_SHORT_FLOAT
-	case t_shortfloat:
-	  return make_shortfloat(0.0); /* Immediate float */
-#endif
 	default:;
 	}
 
@@ -271,15 +267,16 @@ ONCE_MORE:
 	 */
 	switch (t) {
 	case t_bignum:
-#ifdef WITH_GMP
 	  obj->big.big_dim = obj->big.big_size = 0;
 	  obj->big.big_limbs = NULL;
-#endif
 	  break;
 	case t_ratio:
 	  obj->ratio.num = OBJNULL;
 	  obj->ratio.den = OBJNULL;
 	  break;
+#ifdef ECL_SSE2
+	case t_sse_pack:
+#endif
 	case t_singlefloat:
 	case t_doublefloat:
 #ifdef ECL_LONG_FLOAT

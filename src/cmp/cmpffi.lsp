@@ -77,6 +77,21 @@
     (base-char "char" "CODE_CHAR" "ecl_base_char_code" "CHAR_CODE")
     :wchar
     (character "ecl_character" "CODE_CHAR" "ecl_char_code" "CHAR_CODE")
+    #+sse2
+    :float-sse-pack
+    #+sse2
+    (ext:float-sse-pack "__m128" "ecl_make_float_sse_pack"
+     "ecl_unbox_float_sse_pack" "ecl_unbox_float_sse_pack_unsafe")
+    #+sse2
+    :double-sse-pack
+    #+sse2
+    (ext:double-sse-pack "__m128d" "ecl_make_double_sse_pack"
+     "ecl_unbox_double_sse_pack" "ecl_unbox_double_sse_pack_unsafe")
+    #+sse2
+    :int-sse-pack
+    #+sse2
+    (ext:sse-pack #|<-intentional|# "__m128i" "ecl_make_int_sse_pack"
+     "ecl_unbox_int_sse_pack" "ecl_unbox_int_sse_pack_unsafe")
     :object
     (t "cl_object")
     :bool
@@ -127,9 +142,29 @@
      "ecl_make_ushort" "ecl_to_ushort" "fix")
     ))
 
+(defparameter +representation-type-hash+
+  (loop with table = (make-hash-table :size 128 :test 'eq)
+     for record on +representation-types+ by #'cddr
+     for rep-type = (first record)
+     for information = (second record)
+     do (setf (gethash rep-type table) information)
+     finally (progn
+               #+sse2 ; hack: sse-pack -> int, but int -> int-sse-pack
+               (setf (gethash :int-sse-pack table)
+                     (list* 'ext:int-sse-pack (cdr (gethash :int-sse-pack table))))
+               (return table))))
+
+(defun c-number-rep-type-p (rep-type)
+  (member rep-type +all-number-rep-types+))
+
+(defun c-number-type-p (type)
+  (c-number-rep-type-p (lisp-type->rep-type type)))
+
+(defun rep-type-record (rep-type)
+  (gethash rep-type +representation-type-hash+))
 
 (defun rep-type->lisp-type (rep-type)
-  (let ((output (getf +representation-types+ rep-type)))
+  (let ((output (rep-type-record rep-type)))
     (cond (output
            (if (eq rep-type :void) nil
 	     (or (first output)
@@ -143,7 +178,7 @@
     ;; We expect type = NIL when we have no information. Should be fixed. FIXME!
     ((null type)
      :object)
-    ((getf +representation-types+ type)
+    ((rep-type-record type)
      type)
     (t
      (do ((l +representation-types+ (cddr l)))
@@ -152,8 +187,8 @@
 	 (return-from lisp-type->rep-type (first l)))))))
 
 (defun rep-type-name (type)
-  (or (second (getf +representation-types+ type))
-      (cmperr "Not a valid type name ~S" type)))
+  (or (second (rep-type-record type))
+      (cmperr "Not a valid C type name ~S" type)))
 
 (defun lisp-type-p (type)
   (subtypep type 'T))
@@ -164,19 +199,19 @@
 					       long-float-value)))
     (wt (third loc)) ;; VV index
     (return-from wt-to-object-conversion))
-  (let ((x (caddr (getf +representation-types+ loc-rep-type))))
+  (let ((x (third (rep-type-record loc-rep-type))))
     (unless x
       (cmperr "Cannot coerce C variable of type ~A to lisp object" loc-rep-type))
     (wt x "(" loc ")")))
 
 (defun wt-from-object-conversion (dest-type loc-type rep-type loc)
-  (let ((x (cdddr (getf +representation-types+ rep-type))))
+  (let ((x (cdddr (rep-type-record rep-type))))
     (unless x
       (cmperr "Cannot coerce lisp object to C type ~A" rep-type))
-    (wt (if (and (not (policy-check-all-arguments-p))
-		 (subtypep loc-type dest-type))
+    (wt (if (or (policy-assume-no-errors)
+                (subtypep loc-type dest-type))
 	    (second x)
-	  (first x))
+            (first x))
 	"(" loc ")")))
 
 ;; ----------------------------------------------------------------------
@@ -198,6 +233,7 @@
 (defun loc-type (loc)
   (cond ((eq loc NIL) 'NULL)
 	((var-p loc) (var-type loc))
+        ((vv-p loc) (vv-type loc))
 	((si::fixnump loc) 'fixnum)
 	((atom loc) 'T)
 	(t
@@ -218,6 +254,7 @@
 (defun loc-representation-type (loc)
   (cond ((member loc '(NIL T)) :object)
 	((var-p loc) (var-rep-type loc))
+        ((vv-p loc) :object)
 	((si::fixnump loc) :fixnum)
         ((eq loc 'TRASH) :void)
 	((atom loc) :object)
@@ -234,6 +271,7 @@
                              (t type))))
 	   (BIND (var-rep-type (second loc)))
 	   (LCL (lisp-type->rep-type (or (third loc) T)))
+           ((JUMP-TRUE JUMP-FALSE) :bool)
 	   (otherwise :object)))))
 
 (defun wt-coerce-loc (dest-rep-type loc)
@@ -257,7 +295,7 @@
 	(#.+all-integer-rep-types+
 	 (case loc-rep-type
 	   (#.+all-number-rep-types+
-	    (wt "((" (rep-type-name dest-rep-type) ")" loc ")"))
+	    (wt "(" (rep-type-name dest-rep-type) ")(" loc ")"))
 	   ((:object)
 	    (ensure-valid-object-type dest-type)
 	    (wt-from-object-conversion dest-type loc-type dest-rep-type loc))
@@ -266,7 +304,7 @@
 	((:char :unsigned-char :wchar)
 	 (case loc-rep-type
 	   ((:char :unsigned-char :wchar)
-	    (wt "((" (rep-type-name dest-rep-type) ")" loc ")"))
+	    (wt "(" (rep-type-name dest-rep-type) ")(" loc ")"))
 	   ((:object)
 	    (ensure-valid-object-type dest-type)
 	    (wt-from-object-conversion dest-type loc-type dest-rep-type loc))
@@ -275,7 +313,7 @@
 	((:float :double :long-double)
 	 (case loc-rep-type
 	   (#.+all-number-rep-types+
-	    (wt "((" (rep-type-name dest-rep-type) ")" loc ")"))
+	    (wt "(" (rep-type-name dest-rep-type) ")(" loc ")"))
 	   ((:object)
 	    ;; We relax the check a bit, because it is valid in C to coerce
 	    ;; between floats of different types.
@@ -292,6 +330,12 @@
 	   (otherwise
 	    (coercion-error))))
 	((:object)
+         #+sse2
+	 (case loc-rep-type
+	   ((:int-sse-pack :float-sse-pack :double-sse-pack)
+            (when (>= (cmp-env-optimization 'speed) 1)
+              (cmpwarn-style "Boxing a value of type ~S - performance degraded."
+                             loc-rep-type))))
 	 (wt-to-object-conversion loc-rep-type loc))
 	((:pointer-void)
 	 (case loc-rep-type
@@ -309,6 +353,26 @@
 	    (wt "ecl_base_string_pointer_safe(" loc ")"))
 	   ((:pointer-void)
 	    (wt "(char *)(" loc ")"))
+	   (otherwise
+	    (coercion-error))))
+	#+sse2
+	((:int-sse-pack :float-sse-pack :double-sse-pack)
+	 (case loc-rep-type
+	   ((:object)
+	    (wt-from-object-conversion 'ext:sse-pack loc-type dest-rep-type loc))
+           ;; Implicitly cast between SSE subtypes
+           ((:int-sse-pack :float-sse-pack :double-sse-pack)
+            (wt (ecase dest-rep-type
+                  (:int-sse-pack (ecase loc-rep-type
+                                   (:float-sse-pack "_mm_castps_si128")
+                                   (:double-sse-pack "_mm_castpd_si128")))
+                  (:float-sse-pack (ecase loc-rep-type
+                                     (:int-sse-pack "_mm_castsi128_ps")
+                                     (:double-sse-pack "_mm_castpd_ps")))
+                  (:double-sse-pack (ecase loc-rep-type
+                                      (:int-sse-pack "_mm_castsi128_pd")
+                                      (:float-sse-pack "_mm_castps_pd"))))
+                "(" loc ")"))
 	   (otherwise
 	    (coercion-error))))
 	(t
@@ -371,6 +435,7 @@
     (let ((ndx (position :cstring arg-types)))
       (when ndx
 	(let* ((var (gensym))
+               (arguments (copy-list arguments))
 	       (value (elt arguments ndx)))
 	  (setf (elt arguments ndx) var
 		(elt arg-types ndx) :char*)
@@ -391,8 +456,9 @@
 	    ((equal output-type '(VALUES &REST t))
 	     (setf output-rep-type '((VALUES &REST t))))
 	    ((and (consp output-type) (eql (first output-type) 'VALUES))
-	     (setf output-rep-type (mapcar #'cdr (mapcar #'produce-type-pair (rest output-type)))
-		   output-type 'T))
+	     (let ((x (mapcar #'produce-type-pair (rest output-type))))
+	       (setf output-rep-type (mapcar #'cdr x)
+		     output-type `(VALUES ,@(mapcar #'car x)))))
 	    (t
 	     (let ((x (produce-type-pair output-type)))
 	       (setf output-type (car x)
@@ -406,7 +472,9 @@
       (do ((processed-arguments '())
 	   (processed-arg-types '()))
 	  ((and (endp arguments) (endp arg-types))
-	   (make-c1form* 'C-INLINE :type output-type :args
+	   (make-c1form* 'C-INLINE :type output-type
+                         :side-effects side-effects
+                         :args
 			 (nreverse processed-arguments)
 			 (nreverse processed-arg-types)
 			 output-rep-type
@@ -541,17 +609,15 @@
 	 (let* ((k (read-char s))
 		(next-char (peek-char nil s nil nil))
 		(index (digit-char-p k 36)))
-	   (cond ((or (null index) (and next-char (alphanumericp next-char)))
+	   (cond ((eq k #\#)
+                  (wt #\#))
+                 ((or (null index) (and next-char (alphanumericp next-char)))
 		  (wt #\# k))
 		 ((< index (length coerced-arguments))
 		  (wt (nth index coerced-arguments)))
 		 (t
+                  (print k)
+                  (print index)
 		  (cmperr "C-INLINE: Variable code exceeds number of arguments")))))
 	(otherwise
 	 (write-char c *compiler-output1*))))))
-
-(put-sysprop 'FFI:CLINES 'C1SPECIAL #'c1clines)
-(put-sysprop 'FFI:C-INLINE 'C1SPECIAL #'c1c-inline)
-(put-sysprop 'FFI:C-INLINE 'C2 #'c2c-inline)
-(put-sysprop 'FFI:C-INLINE 'WT-LOC #'wt-c-inline-loc)
-(put-sysprop 'COERCE-LOC 'WT-LOC #'wt-coerce-loc)

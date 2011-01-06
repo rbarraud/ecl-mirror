@@ -17,10 +17,31 @@
 #+new-cmp
 (in-package "C-LOG")
 
-(defconstant +note-format+ "~&~@<  ~;~?~;~:@>")
-(defconstant +warn-format+ "~&~@<  ! ~;~?~;~:@>")
-(defconstant +error-format+ "~&~@<  * ~;~?~;~:@>")
-(defconstant +fatal-format+ "~&~@<  ** ~;~?~;~:@>")
+#+cmu-format
+(progn
+  (defconstant +note-format+ "~&~@<  ~;~?~;~:@>")
+  (defconstant +warn-format+ "~&~@<  ! ~;~?~;~:@>")
+  (defconstant +error-format+ "~&~@<  * ~;~?~;~:@>")
+  (defconstant +fatal-format+ "~&~@<  ** ~;~?~;~:@>"))
+#-cmu-format
+(progn
+  (defconstant +note-format+ "~&  ~?")
+  (defconstant +warn-format+ "~&  ! ~?")
+  (defconstant +error-format+ "~&  * ~?")
+  (defconstant +fatal-format+ "~&  ** ~?"))
+
+;; Return a namestring for a path that is sufficiently
+;; unambiguous (hopefully) for the C compiler (and associates)
+;; to decipher.
+(defun brief-namestring (path)
+  ;; In Windows we cannot use enough-namestring in the compiler
+  ;; because it breaks down when using paths such as
+  ;; c:/docume~1/juanjo/locals~1/temp/foo.tmp. enough-namestring would
+  ;; return /docume~1/juanjo/locals~1/temp/foo.tmp which is not found
+  #+windows
+  (namestring (si::coerce-to-filename path))
+  #-windows
+  (enough-namestring (si::coerce-to-filename path)))
 
 (defun innermost-non-expanded-form (form)
   (when (listp form)
@@ -106,7 +127,10 @@
 
 (defun print-compiler-message (c stream)
   (unless (typep c *suppress-compiler-messages*)
-    (format stream "~&~@<;;; ~@;~A~:>" c)))
+    #+cmu-format
+    (format stream "~&~@<;;; ~@;~A~:>" c)
+    #-cmu-format
+    (format stream "~&;;; ~A" c)))
 
 ;;; A few notes about the following handlers. We want the user to be
 ;;; able to capture, collect and perhaps abort on the different
@@ -133,7 +157,7 @@
 
 (defun handle-compiler-internal-error (c)
   (when *compiler-break-enable*
-    (si::default-debugger c))
+    (invoke-debugger c))
   (setf c (make-condition 'compiler-internal-error
                           :format-control "~A"
                           :format-arguments (list c)))
@@ -156,13 +180,6 @@
 
 (defmacro with-compilation-unit ((&rest options) &body body)
  `(do-compilation-unit #'(lambda () ,@body) ,@options))
-
-(defun compiler-debugger (condition old-hook)
-  #+(or)
-  (when *compiler-break-enable*
-    (si::default-debugger condition))
-  (si::default-debugger condition)
-  (abort))
 
 (defmacro with-compiler-env ((compiler-conditions) &body body)
   `(let ((*compiler-conditions* nil))
@@ -218,8 +235,21 @@
     (print-compiler-message c t)
     (abort)))
 
-(defun check-args-number (operator args &optional (min 0) (max nil))
-  (let ((l (length args)))
+(defun safe-list-length (l)
+  (cond ((null l)
+         0)
+        ((atom l)
+         nil)
+        (t
+         (handler-case (list-length l)
+           (error (c) nil)))))
+
+(defun check-args-number (operator args &optional (min 0) (max most-positive-fixnum))
+
+  (let ((l (safe-list-length args)))
+    (when (null l)
+      (let ((*print-circle* t))
+        (cmperr "Improper or circular list passed to ~A~%~A" operator args)))
     (when (< l min)
       (too-few-args operator min l))
     (when (and max (> l max))
@@ -276,10 +306,11 @@
 (defun undefined-variable (sym)
   (do-cmpwarn 'compiler-undefined-variable :name sym))
   
-(defun baboon (&aux (*print-case* :upcase))
+(defun baboon (&key (format-control "A bug was found in the compiler")
+               format-arguments)
   (signal 'compiler-internal-error
-	  :format-control "A bug was found in the compiler."
-	  :format-arguments nil))
+	  :format-control format-control
+	  :format-arguments format-arguments))
   
 (defmacro with-cmp-protection (main-form error-form)
   `(let* ((si::*break-enable* *compiler-break-enable*)
@@ -293,8 +324,8 @@
            (setf throw-flag nil))
        (when throw-flag ,error-form))))
 
-(defun cmp-eval (form)
-  (handler-case (eval form)
+(defun cmp-eval (form &optional (env *cmp-env*))
+  (handler-case (si::eval-with-env form env nil t t)
     (serious-condition (c)
       (when *compiler-break-enable*
         (invoke-debugger c))
@@ -302,15 +333,12 @@
               form c)
       nil)))
 
-(defun cmp-macroexpand (form &optional (env *cmp-env*))
-  (handler-case (macroexpand form env)
-    (serious-condition (c)
-      (when *compiler-break-enable*
-        (invoke-debugger c))
-      (cmperr "The macro form ~s was not expanded successfully.~%Error detected:~%~A"
-              form c)
-      nil)))
-  
+;;; Like macro-function except it searches the lexical environment,
+;;; to determine if the macro is shadowed by a function or a macro.
+(defun cmp-macro-function (name)
+  (or (cmp-env-search-macro name)
+      (macro-function name)))
+
 (defun cmp-expand-macro (fd form &optional (env *cmp-env*))
   (handler-case
       (let ((new-form (funcall *macroexpand-hook* fd form env)))
@@ -347,9 +375,3 @@
                           (<= #.(char-code #\0) cc #.(char-code #\9)))
                       c #\_)))
             (string-downcase (prin1-to-string obj)))))
-
-#-new-cmp
-(defun proper-list-p (x &optional test)
-  (and (listp x)
-       (handler-case (list-length x) (type-error (c) nil))
-       (or (null test) (every test x))))

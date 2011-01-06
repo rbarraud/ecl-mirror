@@ -20,10 +20,11 @@
 
 (defmethod reinitialize-instance ((instance T) &rest initargs)
   (check-initargs (class-of instance) initargs
-		  (append (compute-applicable-methods
-			   #'reinitialize-instance (list instance))
-			  (compute-applicable-methods
-			   #'shared-initialize (list instance t))))
+		  (valid-keywords-from-methods
+                   (compute-applicable-methods
+                    #'reinitialize-instance (list instance))
+                   (compute-applicable-methods
+                    #'shared-initialize (list instance t))))
   (apply #'shared-initialize instance '() initargs))
 
 (defmethod shared-initialize ((instance T) slot-names &rest initargs)
@@ -109,13 +110,10 @@
   ;; be (:allow-other-keys t), which disables the checking of the arguments.
   ;; (Paul Dietz's ANSI test suite, test CLASS-24.4)
   (setf initargs (add-default-initargs class initargs))
-  (check-initargs class initargs
-		  (append (compute-applicable-methods
-			   #'allocate-instance (list class))
-			  (compute-applicable-methods
-			   #'initialize-instance (list (class-prototype class)))
-			  (compute-applicable-methods
-			   #'shared-initialize (list (class-prototype class) t))))
+  (let ((keywords (class-valid-initargs class)))
+    (when (eq keywords (si::unbound))
+      (setf keywords (precompute-valid-initarg-keywords class)))
+    (check-initargs class initargs nil (class-slots class) keywords))
   (let ((instance (apply #'allocate-instance class initargs)))
     (apply #'initialize-instance instance initargs)
     instance))
@@ -125,17 +123,19 @@
   ;; Here, for each slot which is not mentioned in the initialization
   ;; arguments, but which has a value associated with :DEFAULT-INITARGS,
   ;; we compute the value and add it to the list of initargs.
-  (dolist (scan (class-default-initargs class))
-    (let* ((initarg (first scan))
-	   (value (third scan))
-	   (supplied-value (si::search-keyword initargs initarg)))
-      (when (or (eq supplied-value '+initform-unsupplied+)
-		(eq supplied-value 'si::failed))
-	(when (eq supplied-value '+initform-unsupplied+)
-	  (remf initargs initarg))
-	(setf value (funcall value)
-	      initargs (append initargs (list initarg value))))))
-  initargs)
+  (let ((output '()))
+    (dolist (scan (class-default-initargs class))
+      (let* ((initarg (first scan))
+             (value (third scan))
+             (supplied-value (si::search-keyword initargs initarg)))
+        (when (or (eq supplied-value '+initform-unsupplied+)
+                  (eq supplied-value 'si::failed))
+          (when (eq supplied-value '+initform-unsupplied+)
+            (remf initargs initarg))
+          (setf output (list* (funcall value) initarg output)))))
+    (if output
+        (append initargs (nreverse output))
+        initargs)))
 
 (defmethod direct-slot-definition-class ((class T) &rest canonicalized-slot)
   (find-class 'standard-direct-slot-definition nil))
@@ -176,11 +176,28 @@
 
   class)
 
-(defmethod shared-initialize :after ((class std-class) slot-names &rest initargs &key
-				     (optimize-slot-access (list *optimize-slot-access*))
-				     sealedp)
+(defun precompute-valid-initarg-keywords (class)
+  (setf (class-valid-initargs class)
+        (loop with methods = (nconc
+                              (compute-applicable-methods
+                               #'allocate-instance (list class))
+                              (compute-applicable-methods
+                               #'initialize-instance (list (class-prototype class)))
+                              (compute-applicable-methods
+                               #'shared-initialize (list (class-prototype class) t)))
+           for m in methods
+           for k = (method-keywords m)
+           when (eq k t)
+           return t
+           append k)))
+
+(defmethod shared-initialize ((class std-class) slot-names &rest initargs &key
+                              (optimize-slot-access (list *optimize-slot-access*))
+                              sealedp)
   (setf (slot-value class 'optimize-slot-access) (first optimize-slot-access)
-	(slot-value class 'sealedp) (and sealedp t)))
+	(slot-value class 'sealedp) (and sealedp t))
+  (setf class (call-next-method))
+  class)
 
 (defmethod add-direct-subclass ((parent class) child)
   (pushnew child (class-direct-subclasses parent)))
@@ -554,7 +571,7 @@ because it contains a reference to the undefined class~%  ~A"
 	       `(si::instance-ref ,slotd #.(position 'location +slot-definition-slots+
 						     :key #'first))))
     (values #'(lambda (self)
-                (declare (optimize (safety 0) (speed 3) (debug 0))
+                (declare (optimize (safety 1) (speed 3) (debug 0))
                          (standard-object self))
                 (ensure-up-to-date-instance self)
 		(let* ((class (si:instance-class self))
@@ -568,7 +585,7 @@ because it contains a reference to the undefined class~%  ~A"
 		      value
 		      (values (slot-unbound (class-of self) self slot-name)))))
 	    #'(lambda (value self)
-                (declare (optimize (safety 0) (speed 3) (debug 0))
+                (declare (optimize (safety 1) (speed 3) (debug 0))
                          (standard-object self))
                 (ensure-up-to-date-instance self)
 		(let* ((class (si:instance-class self))
@@ -583,12 +600,12 @@ because it contains a reference to the undefined class~%  ~A"
   (declare (si::c-local)
 	   (fixnum slot-index))
   (values #'(lambda (self)
-              (declare (optimize (safety 0) (speed 3) (debug 0))
+              (declare (optimize (safety 1) (speed 3) (debug 0))
                        (standard-object self))
               (ensure-up-to-date-instance self)
 	      (safe-instance-ref self index))
 	  #'(lambda (value self)
-              (declare (optimize (safety 0) (speed 3) (debug 0))
+              (declare (optimize (safety 1) (speed 3) (debug 0))
                        (standard-object self))
               (ensure-up-to-date-instance self)
 	      (si:instance-set self index value))))
@@ -695,30 +712,19 @@ because it contains a reference to the undefined class~%  ~A"
 ;;; on SHARED-INITIALIZE, REINITIALIZE-INSTANCE, etc. (See ANSI 7.1.2)
 ;;;
 
-(defun valid-keywords-from-methods (methods)
-  (declare (si::c-local))
-  ;; Given a list of methods, build up the list of valid keyword arguments
-  (do ((m methods (rest m))
-       (keys '()))
-      ((null m)
-       (values keys nil))
-    (multiple-value-bind (reqs opts rest key-flag keywords allow-other-keys)
-	(si::process-lambda-list (method-lambda-list (first m)) t)
-      (when allow-other-keys
-	(return (values nil t)))
-      (do ((k (rest keywords) (cddddr k)))
-	  ((null k))
-	(push (first k) keys)))))
+(defun valid-keywords-from-methods (&rest method-lists)
+  (loop for methods in method-lists
+     when (member t methods :key #'method-keywords)
+     return t
+     nconc methods))
 
 (defun check-initargs (class initargs &optional methods
-		       (slots (class-slots class)))
+		       (slots (class-slots class))
+                       cached-keywords)
   ;; First get all initargs which have been declared in the given
   ;; methods, then check the list of initargs declared in the slots
   ;; of the class.
-  (multiple-value-bind (method-initargs allow-other-keys)
-      (valid-keywords-from-methods methods)
-    (when allow-other-keys
-      (return-from check-initargs))
+  (unless (or (eq methods t) (eq cached-keywords t))
     (do* ((name-loc initargs (cddr name-loc))
 	  (allow-other-keys nil)
 	  (allow-other-keys-found nil)
@@ -736,10 +742,11 @@ because it contains a reference to the undefined class~%  ~A"
 		    (not allow-other-keys-found))
 	       (setf allow-other-keys (second name-loc)
 		     allow-other-keys-found t))
-	      ;; The initialization argument has been declared in some method
-	      ((member name method-initargs))
 	      ;; Check if the arguments is associated with a slot
-	      ((find name slots :test #'member :key #'slot-definition-initargs))
+	      ((member name slots :test #'member :key #'slot-definition-initargs))
+	      ;; The initialization argument has been declared in some method
+              ((member name cached-keywords))
+	      ((and methods (member name methods :test #'member :key #'method-keywords)))
 	      (t
 	       (setf unknown-key name)))))))
 

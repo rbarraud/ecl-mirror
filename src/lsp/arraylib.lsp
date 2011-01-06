@@ -56,6 +56,9 @@ contiguous block."
            x))))
 
 (defun fill-array-with-seq (array initial-contents)
+  (declare (array array)
+           (sequence initial-contents)
+           (optimize (safety 0)))
   (labels ((iterate-over-contents (array contents dims written)
 	     (declare (fixnum written)
 		      (array array)
@@ -94,6 +97,7 @@ Returns a list whose N-th element is the length of the N-th dimension of ARRAY."
   (do ((i (array-rank array))
        (d nil))
       ((= i 0) d)
+    (declare (fixnum i))
     (setq i (1- i))
     (setq d (cons (array-dimension array i) d))))
 
@@ -114,28 +118,57 @@ INDEXes must be equal to the rank of ARRAY."
               (>= (car s) (array-dimension array i)))
           (return nil))))
 
+(defun row-major-index-inner (array indices)
+  (declare (optimize (safety 0))
+           (array array)
+           (si::c-local))
+  (flet ((indexing-error (array indices)
+           (error "Not valid index or indices~%~A~%into array~%~A" indices array)))
+    (do* ((r (array-rank array))
+          (i 0 (1+ i))
+          (j 0)
+          (s indices (cdr (the cons s))))
+         ((null s)
+          (when (< i r)
+            (indexing-error array indices))
+          j)
+      (declare (ext:array-index j)
+               (fixnum i r))
+      (let* ((d (array-dimension array i))
+             (o (car (the cons s)))
+             ndx)
+        (declare (ext:array-index ndx))
+        (unless (and (typep o 'fixnum)
+                     (<= 0 (setf ndx o))
+                     (< ndx (array-dimension array i)))
+          (indexing-error array indices))
+        (setf j (* j d)
+              j (+ j ndx))))))
 
 (defun array-row-major-index (array &rest indices)
   "Args: (array &rest indexes)
 Returns the non-negative integer that represents the location of the element
 of ARRAY specified by INDEXes, assuming all elements of ARRAY are aligned in
 row-major order."
-  (do ((i 0 (1+ i))
-       (j 0 (+ (* j (array-dimension array i)) (car s)))
-       (s indices (cdr s)))
-      ((null s) j)))
+  (declare (array array)
+           (ext:check-arguments-type))
+  (row-major-index-inner array indices))
 
 
 (defun bit (bit-array &rest indices)
   "Args: (bit-array &rest indexes)
 Returns the bit of BIT-ARRAY specified by INDEXes."
-  (apply #'aref bit-array indices))
+  (declare (array bit-array) ;; FIXME! Should be (simple-array bit)
+           (ext:check-arguments-type))
+  (row-major-aref bit-array (row-major-index-inner bit-array indices)))
 
 
 (defun sbit (bit-array &rest indices)
   "Args: (simple-bit-array &rest subscripts)
 Returns the specified bit in SIMPLE-BIT-ARRAY."
-  (apply #'aref bit-array indices))
+  (declare (array bit-array) ;; FIXME! Should be (simple-array bit)
+           (ext:check-arguments-type))
+  (row-major-aref bit-array (row-major-index-inner bit-array indices)))
 
 
 (defun bit-and (bit-array1 bit-array2 &optional result-bit-array)
@@ -232,63 +265,70 @@ Replaces ITEM for the element of VECTOR that is pointed to by the fill-pointer
 of VECTOR and then increments the fill-pointer by one.  Returns NIL if the new
 value of the fill-pointer becomes too large.  Otherwise, returns the new fill-
 pointer as the value."
-  (let ((fp (fill-pointer vector)))
-    (declare (fixnum fp))
-    (cond ((< fp (the fixnum (array-dimension vector 0)))
-           (sys:aset new-element vector fp)
-           (sys:fill-pointer-set vector (the fixnum (1+ fp)))
+  ;; FILL-POINTER asserts vector is a vector
+  (let* ((fp (fill-pointer vector))
+         (vector (the vector vector)))
+    (declare (optimize (safety 0)))
+    (cond ((< fp (array-total-size vector))
+           (sys:aset vector fp new-element)
+           (sys:fill-pointer-set vector (the ext:array-index (1+ fp)))
 	   fp)
 	  (t nil))))
 
-
-(defun vector-push-extend (new-element vector &optional extension)
+(defun vector-push-extend (new-element vector &optional (extension 1))
   "Args: (item vector &optional (n (length vector)))
 Replaces ITEM for the element of VECTOR that is pointed to by the fill-pointer
 of VECTOR and then increments the fill-pointer by one.  If the new value of
 the fill-pointer becomes too large, extends VECTOR for N more elements.
 Returns the new value of the fill-pointer."
-  (let ((fp (fill-pointer vector))
-	(d (array-dimension vector 0)))
-    (declare (fixnum fp d))
-    (unless (< fp d)
-      (adjust-array vector
-		    (list (+ d (or extension (max d 4))))
-		    :element-type (array-element-type vector)
-		    :fill-pointer fp))
-    (sys:aset new-element vector fp)
-    (sys:fill-pointer-set vector (the fixnum (1+ fp)))
-    fp))
+  ;; FILL-POINTER asserts vector is a vector
+  (let* ((fp (fill-pointer vector))
+         (vector (the vector vector)))
+    (declare (optimize (safety 0)))
+    (let ((d (array-total-size vector)))
+      (unless (< fp d)
+        (adjust-array vector
+                      (list (+ d (max extension (max d 4))))
+                      :element-type (array-element-type vector)
+                      :fill-pointer fp))
+      (sys:aset vector fp new-element)
+      (sys:fill-pointer-set vector (1+ fp))
+      fp)))
 
 (defun vector-pop (vector)
   "Args: (vector)
 Decrements the fill-pointer of VECTOR by one and returns the element pointed
 to by the new fill-pointer.  Signals an error if the old value of the fill-
 pointer is 0 already."
-  (let ((fp (fill-pointer vector)))
-    (declare (fixnum fp))
-    (when (= fp 0)
-          (error "The fill pointer of the vector ~S zero." vector))
-    (sys:fill-pointer-set vector (the fixnum (1- fp)))
-    (aref vector (the fixnum (1- fp)))))
+  ;; FILL-POINTER asserts vector is a vector and has fill pointer
+  (let* ((fp (fill-pointer vector))
+         (vector (the vector vector)))
+    (declare (ext:array-index fp)
+             (optimize (safety 0)))
+    (when (zerop fp)
+      (error "The fill pointer of the vector ~S zero." vector))
+    (sys:fill-pointer-set vector (decf fp))
+    (aref vector fp)))
 
 (defun copy-array-contents (dest orig)
   (declare (si::c-local)
+           (array dest orig)
 	   (optimize (safety 0)))
   (labels
       ((do-copy (dest orig dims1 dims2 start1 start2)
 	 (declare (array dest orig)
 		  (list dims1 dims2)
-		  (fixnum start1 start2))
+		  (ext:array-index start1 start2))
 	 (let* ((d1 (pop dims1))
 		(d2 (pop dims2))
 		(l (min d1 d2))
 		(i1 start1)
 		(i2 start2))
-	   (declare (fixnum d1 d2 l step1 step2 i1 i2))
+	   (declare (ext:array-index d1 d2 l i1 i2))
 	   (if (null dims1)
 	       #+ecl-min
 	       (dotimes (i l)
-		 (declare (fixnum i))
+		 (declare (ext:array-index i))
 		 (row-major-aset dest i1 (row-major-aref orig i2))
 		 (incf i1)
 		 (incf i2))
@@ -300,9 +340,9 @@ pointer is 0 already."
 			      :side-effects t)
 	       (let ((step1 (apply #'* dims1))
 		     (step2 (apply #'* dims2)))
-		 (declare (fixnum step1 step2))
+		 (declare (ext:array-index step1 step2))
 		 (dotimes (i l)
-		   (declare (fixnum i))
+		   (declare (ext:array-index i))
 		   (do-copy dest orig dims1 dims2 i1 i2)
 		   (incf i1 step1)
 		   (incf i2 step2)))))))
@@ -327,8 +367,6 @@ pointer is 0 already."
 Adjusts the dimensions of ARRAY to the given DIMENSIONS.  ARRAY must be an
 adjustable array."
   (declare (ignore initial-element
-                   initial-contents
-                   fill-pointer
                    displaced-index-offset))
   (when (integerp new-dimensions)
         (setq new-dimensions (list new-dimensions)))
@@ -350,25 +388,22 @@ adjustable array."
     ))
 
 ;;; Copied from cmuci-compat.lisp of CLSQL by Kevin M. Rosenberg (LLGPL-licensed)
-(defmacro shrink-vector (vec len)
-  "Shrinks a vector. Optimized if vector has a fill pointer.
-Needs to be a macro to overwrite value of VEC."
-  (let ((new-vec (gensym)))
-    `(cond
-      ((adjustable-array-p ,vec)
-       (adjust-array ,vec ,len))
-      ((typep ,vec 'simple-array)
-       (let ((,new-vec (make-array ,len :element-type
-				   (array-element-type ,vec))))
-	 (check-type ,len fixnum)
-	 (locally (declare (optimize (speed 3) (safety 0) (space 0)) )
-	   (dotimes (i ,len)
-	     (declare (fixnum i))
-	     (setf (aref ,new-vec i) (aref ,vec i))))
-	 (setq ,vec ,new-vec)))
-      ((typep ,vec 'vector)
-	(setf (fill-pointer ,vec) ,len)
-	,vec)
-      (t
-       (error "Unable to shrink vector ~S which is type-of ~S" ,vec (type-of ,vec))) 
-       )))
+(defun shrink-vector (vec len)
+  "Shrinks a vector."
+  (cond ((adjustable-array-p vec)
+	 (adjust-array vec len))
+	((typep vec 'simple-array)
+	 (let ((new-vec (make-array len :element-type
+				    (array-element-type vec))))
+	   (check-type len fixnum)
+	   (locally (declare (optimize (speed 3) (safety 0) (space 0)) )
+	     (dotimes (i len)
+	       (declare (fixnum i))
+	       (setf (aref new-vec i) (aref vec i))))
+	   new-vec))
+	((typep vec 'vector)
+	 (setf (fill-pointer vec) len)
+	 vec)
+	(t
+	 (error "Unable to shrink vector ~S which is type-of ~S" vec (type-of vec))) 
+	))

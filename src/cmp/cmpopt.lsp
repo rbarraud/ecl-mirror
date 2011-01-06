@@ -46,13 +46,9 @@
   ;; returns the original form. Note that for successful recursion we
   ;; have to output indeed the ORIGINAL FORM, not some intermediate
   ;; step. Otherwise the compiler macro will enter an infinite loop.
-  (let* ((space (cmp-env-optimization 'space env))
-	 (speed (cmp-env-optimization 'speed env))
-	 (safety (cmp-env-optimization 'safety env))
-	 (orig-type type)
+  (let* ((orig-type type)
 	 aux function
 	 first rest)
-    (declare (si::fixnum space speed))
     (cond ((not (and (constantp type) (setf type (cmp-eval type)) t))
 	   form)
 	  ;; Type is not known
@@ -61,14 +57,12 @@
 	  ;; Simple ones
 	  ((subtypep 'T type) T)
 	  ((eq type 'NIL) NIL)
-	  ((eq aux 'SATISFIES)
-	   `(funcall #',function ,object))
 	  ;;
 	  ;; Detect inconsistencies in the provided type. If we run at low
 	  ;; safety, we will simply assume the user knows what she's doing.
 	  ((subtypep type NIL)
 	   (cmpwarn "TYPEP form contains an empty type ~S and cannot be optimized" type)
-	   (if (< safety 1)
+	   (if (policy-assume-no-errors)
 	       NIL
 	       form))
 	  ;;
@@ -92,12 +86,11 @@
 	  ;;
 	  ;; Complex types defined with DEFTYPE.
 	  ((and (atom type)
-		(get-sysprop type 'SI::DEFTYPE-DEFINITION)
-		(setq function (get-sysprop type 'SI::DEFTYPE-DEFINITION)))
+                (setq function (get-sysprop type 'SI::DEFTYPE-DEFINITION)))
 	   (expand-typep form object `',(funcall function) env))
 	  ;;
 	  ;; No optimizations that take up too much space unless requested.
-	  ((and (>= space 2) (> space speed))
+	  ((not (policy-inline-type-checks))
 	   form)
 	  ;;
 	  ;; CONS types. They must be checked _before_ sequence types. We
@@ -133,8 +126,7 @@
 	  ;;
 	  ;; (INTEGER * *), etc
 	  ((member first '(INTEGER RATIONAL FLOAT REAL SINGLE-FLOAT
-			   DOUBLE-FLOAT #+long-float LONG-FLOAT
-			   #+short-float SHORT-FLOAT))
+			   DOUBLE-FLOAT #+long-float LONG-FLOAT))
 	   (let ((var (gensym)))
 	     ;; Small optimization: it is easier to check for fixnum
 	     ;; than for integer. Use it when possible.
@@ -145,6 +137,12 @@
                 (declare (:read-only ,var))
 		(AND (TYPEP ,var ',first)
 		     ,@(expand-in-interval-p `(the ,first ,var) rest)))))
+          ;;
+          ;; (SATISFIES predicate)
+	  ((and (eq first 'SATISFIES)
+                (= (list-length type) 2)
+                (symbolp (setf function (second type))))
+	   `(,function ,object))
 	  ;;
 	  ;; Complex types with arguments.
 	  ((setf rest (rest type)
@@ -169,7 +167,7 @@
   (multiple-value-bind (declarations body)
       (si:process-declarations body nil)
     (let* ((list-var (gensym))
-	   (typed-var (if (policy-check-all-arguments-p env)
+	   (typed-var (if (policy-assume-no-errors env)
 			  list-var
 			  `(the cons ,list-var))))
       `(block nil
@@ -212,10 +210,7 @@
   ;; returns the original form. Note that for successful recursion we
   ;; have to output indeed the ORIGINAL FORM, not some intermediate
   ;; step. Otherwise the compiler macro will enter an infinite loop.
-  (let* ((space (cmp-env-optimization 'space env))
-	 (speed (cmp-env-optimization 'speed env))
-	 (safety (cmp-env-optimization 'safety env))
-	 (orig-type type)
+  (let* ((orig-type type)
 	 first rest)
     (cond ((not (and (constantp type) (setf type (cmp-eval type))))
 	   form)
@@ -229,7 +224,7 @@
 	   (cmperror "Cannot COERCE an expression to an empty type."))
 	  ;;
 	  ;; No optimizations that take up too much space unless requested.
-	  ((and (>= space 2) (> space speed))
+	  ((not (policy-inline-type-checks))
 	   form)
 	  ;;
 	  ;; Search for a simple template above, replacing X by the value.
@@ -268,7 +263,8 @@
 	       (si::closest-sequence-type type)
 	     (if (eq elt-type 'list)
 		 `(si::coerce-to-list ,value)
-		 `(si::coerce-to-vector ,value ',elt-type ',length))))
+		 `(si::coerce-to-vector ,value ',elt-type ',length
+                                        ,(and (subtypep type 'simple-array) t)))))
 	  ;;
 	  ;; There are no other atomic types to optimize
 	  ((atom type)
@@ -295,10 +291,9 @@
 	  ;; does not match. However, if safety settings are low, we
 	  ;; skip the interval test.
 	  ((member first '(INTEGER RATIONAL FLOAT REAL SINGLE-FLOAT
-			   DOUBLE-FLOAT #+long-float LONG-FLOAT
-			   #+short-float SHORT-FLOAT))
+			   DOUBLE-FLOAT #+long-float LONG-FLOAT))
 	   (let ((unchecked (expand-coerce form value `',first env)))
-	     (if (< safety 1)
+	     (if (policy-assume-no-errors)
 		 unchecked
 		 `(let ((x ,unchecked))
 		    (declare (,first x))
@@ -313,90 +308,3 @@
 
 (define-compiler-macro coerce (&whole form value type &environment env)
   (expand-coerce form value type env))
-
-;;;
-;;; AREF/ASET
-;;;
-
-#|
-(define-compiler-macro aref (&whole form array &rest indices &environment env)
-  (cond ((not (policy-open-code-aref/aset-p env))
-         form)
-        ((null indices)
-         (list 'row-major-aref array 0))
-        ((null (rest indices))
-         (cons 'row-major-aref (rest form)))
-        ((rest indices)
-         (let* ((a (gensym))
-                (check (policy-array-bounds-check-p env))
-                (indices (expand-row-major-index a indices check)))
-           `(let ((,a ,array))
-              (declare (:read-only ,a))
-              (row-major-aref ,a ,indices))))))
-
-(define-compiler-macro si::aset (&whole form value array &rest indices
-                                        &environment env)
-  (cond ((not (policy-open-code-aref/aset-p env))
-         form)
-        ((null indices)
-         (list 'si::row-major-aset array 0 value))
-        ((null (rest indices))
-         (list 'si::row-major-aset array (first indices) value))
-        (t
-         (let* ((a (gensym))
-                (v (gensym))
-                (check (policy-array-bounds-check-p env))
-                (indices (expand-row-major-index a indices check)))
-           `(let ((,v ,value)
-                  (,a ,array))
-              (declare (:read-only ,a ,v))
-              (si::row-major-aset ,a ,indices ,value))))))
-
-(defmacro locally-unsafe (&rest forms)
-  `(locally (declare (optimize (safety 0))) ,@forms))
-
-(defun expand-row-major-index (a indices &optional (check t))
-  (let* ((output-var (gensym))
-         (dim-var (gensym))
-         (ndx-var (gensym))
-         (expected-rank (length indices)))
-    `(let* ((,ndx-var ,(pop indices))
-            (,output-var ,ndx-var)
-            (,dim-var 0))
-       (declare (type si::index ,ndx-var ,output-var ,dim-var))
-       ,@(when check
-          `((declare (optimize (safety 0)))
-            (unless (arrayp ,a)
-              (error-not-an-array ,a))
-            (unless (= (array-rank ,a) ,expected-rank)
-              (error-wrong-dimensions ,a ,expected-rank))
-            (setf ,dim-var (array-dimension ,a 0))
-            (unless (< ,output-var ,dim-var)
-              (error-wrong-index ,a ,ndx-var ,dim-var))))
-       ,@(loop for j from 1
-            for index in indices
-            collect `(setf ,dim-var (array-dimension ,a ,j)
-                           ,ndx-var ,index)
-            collect (when check
-                      `(unless (< ,ndx-var ,dim-var)
-                         (error-wrong-index ,a ,ndx-var ,dim-var)))
-            collect `(setf ,output-var (the si::index
-                                         (+ (the si::index (* ,output-var ,dim-var))
-                                            ,ndx-var))))
-       ,output-var)))
-
-(trace c::expand-row-major-index)
-
-(defmacro error-not-an-array (a)
-  `(c-inline (,a) (:object) :void "FEtype_error_array(#0)"))
-
-(defmacro error-wrong-dimensions (a rank)
-  `(c-inline (,a ,rank) (:object :cl-index) :void
-             "FEwrong_dimensions(#0,#1);"))
-
-(defmacro error-wrong-index (a ndx limit)
-  `(c-inline (,a ,ndx ,limit) (:object :cl-index :cl-index) :void
-             "FEwrong_index(#0,#1,#2);"))
-
-
-|#

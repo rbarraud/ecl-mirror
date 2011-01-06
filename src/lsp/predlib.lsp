@@ -14,6 +14,22 @@
 
 (in-package "SYSTEM")
 
+(defun constantly-t (&rest foo)
+  (declare (ignore foo))
+  t)
+
+(defun constantly-nil (&rest foo)
+  (declare (ignore foo))
+  nil)
+
+(defun constantly (n)
+  "Args: (n)
+Builds a new function which accepts any number of arguments but always outputs N."
+  (case n
+    ((nil) #'constantly-nil)
+    ((t) #'constantly-t)
+    (t #'(lambda (&rest x) (declare (ignore x)) n))))
+
 (defvar *subtypep-cache* (si:make-vector t 256 nil nil nil 0))
 
 (defvar *upgraded-array-element-type-cache* (si:make-vector t 128 nil nil nil 0))
@@ -31,7 +47,8 @@
     (error "~s is not a valid type specifier" name))
   (create-type-name name)
   (put-sysprop name 'DEFTYPE-FORM form)
-  (put-sysprop name 'DEFTYPE-DEFINITION function)
+  (put-sysprop name 'DEFTYPE-DEFINITION
+               (if (functionp function) function (constantly function)))
   (subtypep-clear-cache)
   name)
 
@@ -59,10 +76,15 @@ by (documentation 'NAME 'type)."
 	  (when (and (symbolp variable)
 		     (not (member variable lambda-list-keywords)))
 	    (setf (first l) `(,variable '*))))))
-    `(eval-when (:compile-toplevel :load-toplevel :execute)
-       ,@(si::expand-set-documentation name 'type doc)
-       (do-deftype ',name '(DEFTYPE ,name ,lambda-list ,@body)
-		   #'(LAMBDA-BLOCK ,name ,lambda-list ,@body)))))
+    (let ((function `#'(LAMBDA-BLOCK ,name ,lambda-list ,@body)))
+      (when (and (null lambda-list) (consp body) (null (rest body)))
+        (let ((form (first body)))
+          (when (and (consp form) (eq (first form) 'quote))
+            (setf function form))))
+      `(eval-when (:compile-toplevel :load-toplevel :execute)
+         ,@(si::expand-set-documentation name 'type doc)
+         (do-deftype ',name '(DEFTYPE ,name ,lambda-list ,@body)
+                     ,function)))))
 
 
 ;;; Some DEFTYPE definitions.
@@ -207,36 +229,38 @@ characters with double quotes.  Some strings may be displaced to another
 string, may have a fill-pointer, or may be adjustable.  Other strings are
 called simple-strings."
   #-unicode
-  (if size `(array character (,size)) '(array character (*)))
+  (if (eq size '*)
+      '(array character (*))
+      `(array character (,size)))
   #+unicode
-  (if size
+  (if (eq size '*)
+      '(or (array base-char (*)) (array character (*)))
       `(or (array base-char (,size))
-	   (array character (,size)))
-      '(or (array base-char (*)) (array character (*)))))
+	   (array character (,size)))))
 
-(deftype base-string (&optional size)
+(deftype base-string (&optional (size '*))
   "A string which is made of BASE-CHAR."
-  (if size `(array base-char (,size)) '(array base-char (*))))
+  (if (eq size '*) '(array base-char (*)) `(array base-char (,size))))
 
-(deftype extended-string (&optional size)
+(deftype extended-string (&optional (size '*))
   "A string which is nt a base string"
   #-unicode
   NIL
   #+unicode
-  (if size `(array character (,size)) '(array character (*))))
+  (if (eq size '*) '(array character (*)) `(array character (,size))))
 
-(deftype bit-vector (&optional size)
+(deftype bit-vector (&optional (size '*))
   "A bit-vector is a vector of bits.  A bit-vector is notated by '#*' followed
 by its elements (0 or 1).  Bit-vectors may be displaced to another array, may
 have a fill-pointer, or may be adjustable.  Other bit-vectors are called
 simple-bit-vectors.  Only simple-bit-vectors can be input in the above format
 using '#*'."
-  (if size `(array bit (,size)) '(array bit (*))))
+  (if (eq size '*) '(array bit (*)) `(array bit (,size))))
 
-(deftype simple-vector (&optional size)
+(deftype simple-vector (&optional (size '*))
   "A simple-vector is a vector that is not displaced to another array, has no
 fill-pointer, and is not adjustable."
-  (if size `(simple-array t (,size)) '(simple-array t (*))))
+  (if (eq size '*) '(simple-array t (*)) `(simple-array t (,size))))
 
 (deftype simple-string (&optional size)
   "A simple-string is a string that is not displaced to another array, has no
@@ -260,23 +284,24 @@ fill-pointer, and is not adjustable."
 and is not adjustable."
   (if size `(simple-array bit (,size)) '(simple-array bit (*))))
 
+(deftype array-index ()
+  '(integer 0 #.(1- array-dimension-limit)))
+
 ;;************************************************************
 ;;			TYPEP
 ;;************************************************************
-
-(defun constantly-t (&rest foo)
-  (declare (ignore foo))
-  t)
-
-(defun constantly-nil (&rest foo)
-  (declare (ignore foo))
-  nil)
 
 (defun simple-array-p (x)
   (and (arrayp x)
        (not (adjustable-array-p x))
        (not (array-has-fill-pointer-p x))
        (not (array-displacement x))))
+
+(defun complex-array-p (x)
+  (and (arrayp x)
+       (or (adjustable-array-p x)
+	   (array-has-fill-pointer-p x)
+	   (array-displacement x))))
 
 (eval-when (:execute :load-toplevel :compile-toplevel)
   (defconstant +known-typep-predicates+
@@ -290,6 +315,7 @@ and is not adjustable."
       (CHARACTER . CHARACTERP)
       (COMPILED-FUNCTION . COMPILED-FUNCTION-P)
       (COMPLEX . COMPLEXP)
+      (COMPLEX-ARRAY . COMPLEX-ARRAY-P)
       (CONS . CONSP)
       (FLOAT . FLOATP)
       (SI:FOREIGN-DATA . SI:FOREIGN-DATA-P)
@@ -316,6 +342,10 @@ and is not adjustable."
       (STRING . STRINGP)
       (STRUCTURE . SYS:STRUCTUREP)
       (SYMBOL . SYMBOLP)
+      #+sse2 (EXT:SSE-PACK . EXT:SSE-PACK-P)
+      #+sse2 (EXT:INT-SSE-PACK . EXT:SSE-PACK-P)
+      #+sse2 (EXT:FLOAT-SSE-PACK . EXT:SSE-PACK-P)
+      #+sse2 (EXT:DOUBLE-SSE-PACK . EXT:SSE-PACK-P)
       (T . CONSTANTLY-T)
       (VECTOR . VECTORP))))
 
@@ -378,6 +408,7 @@ and is not adjustable."
 
 (defun error-type-specifier (type)
   (declare (si::c-local))
+  (print type)
   (error "~S is not a valid type specifier." type))
 
 (defun match-dimensions (array pat)
@@ -440,9 +471,6 @@ Returns T if X belongs to TYPE; NIL otherwise."
     #+long-float
     (LONG-FLOAT
      (and (eq (type-of object) 'LONG-FLOAT) (in-interval-p object i)))
-    #+short-float
-    (SHORT-FLOAT
-     (and (eq (type-of object) 'SHORT-FLOAT) (in-interval-p object i)))
     (COMPLEX
      (and (complexp object)
           (or (null i)
@@ -477,6 +505,13 @@ Returns T if X belongs to TYPE; NIL otherwise."
     (SIMPLE-VECTOR
      (and (simple-vector-p object)
           (or (null i) (match-dimensions object i))))
+    (COMPLEX-ARRAY
+     (and (complex-array-p object)
+          (or (endp i) (eq (car i) '*)
+	      ;; (car i) needs expansion
+	      (eq (array-element-type object)
+		  (upgraded-array-element-type (car i))))
+          (or (endp (cdr i)) (match-dimensions object (second i)))))
     (SIMPLE-ARRAY
      (and (simple-array-p object)
           (or (endp i) (eq (car i) '*)
@@ -740,6 +775,7 @@ if not possible."
 ;;
 (defun find-type-bounds (type in-our-family-p type-<= minimize-super)
   (declare (si::c-local)
+           (optimize (safety 0))
 	   (function in-our-family-p type-<=)) 
   (let* ((subtype-tag 0)
 	 (disjoint-tag 0)
@@ -772,6 +808,7 @@ if not possible."
 ;;
 (defun register-type (type in-our-family-p type-<=)
   (declare (si::c-local)
+           (optimize (safety 0))
 	   (function in-our-family-p type-<=))
   (or (find-registered-tag type)
       (multiple-value-bind (tag-super tag-sub)
@@ -910,7 +947,7 @@ if not possible."
 
 ;;
 ;; This canonicalizes the array type into the form
-;;	({ARRAY | SIMPLE-ARRAY} {elt-type | '*} {'* | (['*]*)})
+;;	({COMPLEX-ARRAY | SIMPLE-ARRAY} {elt-type | '*} {'* | (['*]*)})
 ;;
 ;; ELT-TYPE is the upgraded element type of the input.
 ;;
@@ -939,8 +976,7 @@ if not possible."
 ;; type T2.
 ;;
 (defun array-type-<= (t1 t2)
-  (unless (and (or (eq (first t1) (first t2))
-		   (eq (first t2) 'ARRAY))
+  (unless (and (eq (first t1) (first t2))
 	       (eq (second t1) (second t2)))
     (return-from array-type-<= nil))
   (let ((dim (third t1))
@@ -958,7 +994,7 @@ if not possible."
 
 (defun array-type-p (type)
   (and (consp type)
-       (member (first type) '(ARRAY SIMPLE-ARRAY))))
+       (member (first type) '(COMPLEX-ARRAY SIMPLE-ARRAY))))
 
 ;;----------------------------------------------------------------------
 ;; INTERVALS:
@@ -1068,20 +1104,17 @@ if not possible."
 	tag))
   #+(or)
   (case real-type
-    ((SINGLE-FLOAT DOUBLE-FLOAT INTEGER RATIO #+long-float LONG-FLOAT
-      #+short-float SHORTF-FLOAT)
+    ((SINGLE-FLOAT DOUBLE-FLOAT INTEGER RATIO #+long-float LONG-FLOAT)
      (let ((tag (new-type-tag)))
        (push-type `(COMPLEX ,real-type) tag)
        tag))
     ((RATIONAL) (canonical-type '(OR (COMPLEX INTEGER) (COMPLEX RATIO))))
     ((FLOAT) (canonical-type '(OR (COMPLEX SINGLE-FLOAT) (COMPLEX DOUBLE-FLOAT)
-			       #+long-float (COMPLEX LONG-FLOAT)
-			       #+short-float (COMPLEX SHORT-FLOAT))))
+			       #+long-float (COMPLEX LONG-FLOAT))))
     ((* NIL REAL) (canonical-type
 		   '(OR (COMPLEX INTEGER) (COMPLEX RATIO)
 		        (COMPLEX SINGLE-FLOAT) (COMPLEX DOUBLE-FLOAT)
 		     #+long-float (COMPLEX LONG-FLOAT)
-		     #+short-float (COMPLEX SHORT-FLOAT)
 		     )))
     (otherwise (canonical-complex-type (upgraded-complex-part-type real-type)))))
 
@@ -1090,6 +1123,11 @@ if not possible."
 ;; are strictly supported.
 ;;
 (defun register-cons-type (&optional (car-type '*) (cdr-type '*))
+  ;; The problem with the code below is that it does not suport infinite
+  ;; recursion. Instead we just canonicalize everything to CONS, irrespective
+  ;; of whether the arguments are valid types or not!
+  #+(or)
+  (canonical-type 'CONS)
   (let ((car-tag (if (eq car-type '*) -1 (canonical-type car-type)))
 	(cdr-tag (if (eq cdr-type '*) -1 (canonical-type cdr-type))))
     (cond ((or (zerop car-tag) (zerop cdr-tag))
@@ -1124,8 +1162,6 @@ if not possible."
 	       (FUNCTION (OR COMPILED-FUNCTION GENERIC-FUNCTION))
 
 	       (INTEGER (INTEGER * *))
-	       #+short-float
-	       (SHORT-FLOAT (SHORT-FLOAT * *))
 	       (SINGLE-FLOAT (SINGLE-FLOAT * *))
 	       (DOUBLE-FLOAT (DOUBLE-FLOAT * *))
 	       #+long-float
@@ -1134,9 +1170,9 @@ if not possible."
 
 	       (RATIONAL (OR INTEGER RATIO))
 	       (FLOAT (OR SINGLE-FLOAT DOUBLE-FLOAT
-                       #+long-float LONG-FLOAT
-                       #+short-float SHORT-FLOAT))
-	       (REAL (OR INTEGER SINGLE-FLOAT DOUBLE-FLOAT RATIO))
+                       #+long-float LONG-FLOAT))
+	       (REAL (OR INTEGER SINGLE-FLOAT DOUBLE-FLOAT
+		      #+long-float LONG-FLOAT RATIO))
 	       (COMPLEX (COMPLEX REAL))
 
 	       (NUMBER (OR REAL COMPLEX))
@@ -1178,14 +1214,22 @@ if not possible."
 	       (STRING-STREAM)
 	       (SYNONYM-STREAM)
  	       (TWO-WAY-STREAM)
-	       (STREAM (OR BROADCAST-STREAM CONCATENATED-STREAM ECHO-STREAM
-			   FILE-STREAM STRING-STREAM SYNONYM-STREAM TWO-WAY-STREAM
-			   #+clos-streams GRAY:FUNDAMENTAL-STREAM))
+	       (EXT:ANSI-STREAM (OR BROADCAST-STREAM CONCATENATED-STREAM ECHO-STREAM
+                             FILE-STREAM STRING-STREAM SYNONYM-STREAM TWO-WAY-STREAM
+                             #+clos-streams GRAY:FUNDAMENTAL-STREAM))
+               (STREAM EXT:ANSI-STREAM)
 
 	       (READTABLE)
 	       #+threads (MP::PROCESS)
 	       #+threads (MP::LOCK)
+	       #+threads (MP::RWLOCK)
 	       #+ffi (FOREIGN-DATA)
+	       #+sse2 (EXT:SSE-PACK (OR EXT:INT-SSE-PACK
+				     EXT:FLOAT-SSE-PACK
+				     EXT:DOUBLE-SSE-PACK))
+	       #+sse2 (EXT:INT-SSE-PACK)
+	       #+sse2 (EXT:FLOAT-SSE-PACK)
+	       #+sse2 (EXT:DOUBLE-SSE-PACK)
                (CODE-BLOCK)
 	       ))
 
@@ -1275,25 +1319,30 @@ if not possible."
 	   (NOT (lognot (canonical-type (second type))))
 	   ((EQL MEMBER) (apply #'logior (mapcar #'register-member-type (rest type))))
 	   (SATISFIES (register-satisfies-type type))
-	   ((INTEGER SINGLE-FLOAT DOUBLE-FLOAT RATIO
-	     #+long-float LONG-FLOAT #+short-float SHORT-FLOAT)
+	   ((INTEGER SINGLE-FLOAT DOUBLE-FLOAT RATIO #+long-float LONG-FLOAT)
 	    (register-interval-type type))
 	   ((FLOAT)
 	    (canonical-type `(OR (SINGLE-FLOAT ,@(rest type))
-			      (DOUBLE-FLOAT ,@(rest type)))))
+				 (DOUBLE-FLOAT ,@(rest type))
+				 #+long-float
+				 (LONG-FLOAT ,@(rest type)))))
 	   ((REAL)
 	    (canonical-type `(OR (INTEGER ,@(rest type))
-			      (RATIO ,@(rest type))
-			      (SINGLE-FLOAT ,@(rest type))
-			      (DOUBLE-FLOAT ,@(rest type)))))
+				 (RATIO ,@(rest type))
+				 (SINGLE-FLOAT ,@(rest type))
+				 (DOUBLE-FLOAT ,@(rest type))
+				 #+long-float
+				 (LONG-FLOAT ,@(rest type)))))
 	   ((RATIONAL)
 	    (canonical-type `(OR (INTEGER ,@(rest type))
-			      (RATIO ,@(rest type)))))
+				 (RATIO ,@(rest type)))))
 	   (COMPLEX
 	    (or (find-built-in-tag type)
 		(canonical-complex-type (second type))))
 	   (CONS (apply #'register-cons-type (rest type)))
-	   ((ARRAY SIMPLE-ARRAY) (register-array-type type))
+	   (ARRAY (logior (register-array-type `(COMPLEX-ARRAY ,@(rest type)))
+			  (register-array-type `(SIMPLE-ARRAY ,@(rest type)))))
+	   ((COMPLEX-ARRAY SIMPLE-ARRAY) (register-array-type type))
 	   ;;(FUNCTION (register-function-type type))
 	   ;;(VALUES (register-values-type type))
 	   (FUNCTION (canonical-type 'FUNCTION))

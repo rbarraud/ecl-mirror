@@ -52,14 +52,14 @@
 	        (base-string string vector)
 	        (bit-vector vector)
 	    (stream)
-	      (ansi-stream stream)
-		(file-stream ansi-stream)
-		(echo-stream ansi-stream)
-		(string-stream ansi-stream)
-		(two-way-stream ansi-stream)
-		(synonym-stream ansi-stream)
-		(broadcast-stream ansi-stream)
-		(concatenated-stream ansi-stream)
+	      (ext:ansi-stream stream)
+		(file-stream ext:ansi-stream)
+		(echo-stream ext:ansi-stream)
+		(string-stream ext:ansi-stream)
+		(two-way-stream ext:ansi-stream)
+		(synonym-stream ext:ansi-stream)
+		(broadcast-stream ext:ansi-stream)
+		(concatenated-stream ext:ansi-stream)
 	    (character)
 	    (number)
 	      (real number)
@@ -85,8 +85,10 @@
 	    (si::weak-pointer)
 	    #+threads (mp::process)
 	    #+threads (mp::lock)
+	    #+threads (mp::rwlock)
 	    #+threads (mp::condition-variable)
-	    #+semaphores (mp::semaphore))))
+	    #+semaphores (mp::semaphore)
+	    #+sse2 (ext::sse-pack))))
 
 (loop for (name . rest) in '#.+builtin-classes+
    with index = 1
@@ -172,9 +174,9 @@
 	 (slotds (class-slots class)))
     (declare (:read-only class))
     (when (and slotds
-	       *print-level*
-	       ;; *p-readably* effectively disables *p-level*
+               ;; *p-readably* effectively disables *p-level*
 	       (not *print-readably*)
+	       *print-level*
 	       (zerop *print-level*))
       (write-string "#" stream)
       (return-from print-object obj))

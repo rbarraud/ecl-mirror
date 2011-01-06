@@ -24,9 +24,11 @@ extern "C" {
  ***********/
 
 #ifdef ECL_DOWN_STACK
-#define ecl_cs_check(env,var) if ((char*)(&var) <= (env)->cs_limit) ecl_cs_overflow()
+#define ecl_cs_check(env,var) \
+        if (ecl_unlikely((char*)(&var) <= (env)->cs_limit)) ecl_cs_overflow()
 #else
-#define ecl_cs_check(env,var) if ((char*)(&var) >= (env)->cs_limit) ecl_cs_overflow()
+#define ecl_cs_check(env,var) \
+        if (ecl_unlikely((char*)(&var) >= (env)->cs_limit)) ecl_cs_overflow()
 #endif
 
 /**************
@@ -39,7 +41,7 @@ typedef struct bds_bd {
 } *bds_ptr;
 
 #define	ecl_bds_check(env) \
-	((env->bds_top >= env->bds_limit)? ecl_bds_overflow() : (void)0)
+	(ecl_unlikely(env->bds_top >= env->bds_limit)? (ecl_bds_overflow(),1) : 0)
 
 #define ECL_MISSING_SPECIAL_BINDING (~((cl_index)0))
 
@@ -287,10 +289,10 @@ extern ECL_API ecl_frame_ptr _ecl_frs_push(register cl_env_ptr, register cl_obje
 #define return0()	return ((NVALUES = 0),Cnil)
 #define return1(x)	return ((VALUES(0)=(x)),(NVALUES=1),VALUES(0))
 #define returnn(x)	return x
-#define ecl_return0(env,x) \
-	do { (env)->nvalues = 0; return Cnil; } while (1)
+#define ecl_return0(env) \
+	do { (env)->nvalues = 0; return Cnil; } while (0)
 #define ecl_return1(env,x) \
-	do { cl_object __aux = (x); (env)->nvalues = 0; return __aux; } while (1)
+	do { cl_object __aux = (x); (env)->nvalues = 0; return __aux; } while (0)
 
 /*****************************
  * LEXICAL ENVIRONMENT STACK

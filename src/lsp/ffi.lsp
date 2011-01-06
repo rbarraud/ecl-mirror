@@ -36,7 +36,8 @@
 
 	   "*USE-DFFI*"
 	   )
-  (:import-from "SYS" "NULL-POINTER-P" "GET-SYSPROP" "PUT-SYSPROP"))
+  (:import-from "SYS" "NULL-POINTER-P" "GET-SYSPROP" "PUT-SYSPROP"
+                "FOREIGN-ELT-TYPE-P"))
 
 (in-package "FFI")
 
@@ -57,18 +58,6 @@
 (defvar *ffi-types* (make-hash-table :size 128))
 
 (defvar *use-dffi* t)
-
-(defun foreign-elt-type-p (name)
-  (and (symbolp name)
-       (member name '(:byte :unsigned-byte :short :unsigned-short
-		      :int :unsigned-int :char :unsigned-char
-		      :long :unsigned-long :pointer-void :object
-		      :float :double :cstring
-                      :int8-t #+uint16-t :int16-t
-                      #+uint32-t :int32-t #+uint64-t :int64-t
-                      :uint8-t #+uint16-t :uint16-t
-                      #+uint32-t :uint32-t #+uint64-t :uint64-t)
-	       :test 'eq)))
 
 (defmacro def-foreign-type (name definition)
   `(eval-when (:compile-toplevel :load-toplevel :execute)
@@ -98,14 +87,15 @@
     (unless type
       (error "Incomplete or unknown foreign type ~A" name))
     (cond ((symbolp type)
-	   (setf size (si::size-of-foreign-elt-type type)))
+	   (setf size (si:size-of-foreign-elt-type type)
+                 align (si:alignment-of-foreign-elt-type type)))
 	  ((atom type)
 	   (error "~A is not a valid foreign type identifier" name))
 	  ((eq (setf name (first type)) :struct)
-	   (setf size (slot-position type nil))
-	   (setf align (apply #'max (mapcar #'(lambda (field)
+	   (setf size (slot-position type nil)
+                 align (apply #'max (mapcar #'(lambda (field)
 	                                        (multiple-value-bind (field-size field-align)
-						  (size-of-foreign-type (second field))
+                                                    (size-of-foreign-type (second field))
 						  field-align))
 	                                    (rest type))))
 	   (%align-data size align))
@@ -114,8 +104,8 @@
 	     (error "Incomplete foreign type: ~S" type))
 	   (multiple-value-bind (elt-size elt-align)
 	     (size-of-foreign-type (second type))
-	     (setf size (* size elt-size))
-	     (setf align elt-align)))
+	     (setf size (* size elt-size)
+                   align elt-align)))
 	  ((eq name :union)
 	   (dolist (field (rest type))
 	     (multiple-value-bind (field-size field-align)
@@ -125,21 +115,20 @@
 	       (when (or (null align) (> field-align align))
 	         (setf align field-align)))))
 	  ((eq name '*)
-	   (setf size (si::size-of-foreign-elt-type :pointer-void)))
+	   (setf size (si:size-of-foreign-elt-type :pointer-void)
+                 align (si:alignment-of-foreign-elt-type :pointer-void)))
           ((eq name 'quote)
-           (size-of-foreign-type (second type)))
+           (return-from size-of-foreign-type
+             (size-of-foreign-type (second type))))
 	  (t
 	   (error "~A does not denote a foreign type" name)))
-    (unless align
-      (setf align size))
-    (values size align)))
+    (values size (or align 0))))
 
 (defun allocate-foreign-object (type &optional (size 0 size-flag))
-  (declare (fixnum size))
   (let ((type-size (size-of-foreign-type type)))
     (cond ((null size-flag)
 	   (si::allocate-foreign-data type type-size))
-	  ((>= size 0)
+	  ((and (typep size 'fixnum) (>= size 0))
 	   (let ((bytes (* size type-size)))
 	     (si::allocate-foreign-data `(:array ,type ,size) bytes)))
 	  (t

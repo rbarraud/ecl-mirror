@@ -42,7 +42,7 @@
 		    (dolist (v form)
 		      (add-reg1 v)))
 		   ((var-p form)
-		    (incf (var-ref form) (the fixnum *reg-amount*)))))
+		    (setf (var-ref form) most-positive-fixnum))))
 	   (jumps-to-p (clause tag-name)
 	     ;; Does CLAUSE have a go TAG-NAME in it?
 	     (cond ((c1form-p clause)
@@ -78,7 +78,7 @@
 	   collect (if (consp x)
 		       x
 		       (let ((tag (make-tag :name x :var tag-var :index tag-index)))
-			 (cmp-env-register-tag tag)
+			 (cmp-env-register-tag (tag-name tag) tag)
 			 (incf tag-index)
 			 tag))))
   ;; Split forms according to the tag they are preceded by and compile
@@ -206,7 +206,6 @@
 		       (var-kind var) 'LEXICAL))
 	    (unw (unless (var-kind var)
 		   (setf (var-kind var) :OBJECT))))
-      (incf (var-ref var))
       (incf (tag-ref tag))
       (add-to-read-nodes var (make-c1form* 'GO :args tag (or ccb clb unw))))))
 
@@ -218,11 +217,3 @@
       (progn
 	(unwind-no-exit (tag-unwind-exit tag))
 	(wt-nl) (wt-go (tag-label tag)))))
-
-;;; ------------------------------------------------------------
-
-(put-sysprop 'tagbody 'c1special 'c1tagbody)
-(put-sysprop 'tagbody 'c2 'c2tagbody)
-
-(put-sysprop 'go 'c1special 'c1go)
-(put-sysprop 'go 'c2 'c2go)

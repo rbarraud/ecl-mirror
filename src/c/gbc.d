@@ -136,7 +136,6 @@ BEGIN:
 	switch (type_of(x)) {
 
 	case t_bignum: {
-#ifdef WITH_GMP
 		/* GMP may set num.alloc before actually allocating anything.
 		   With these checks we make sure we do not move anything
 		   we don't have to. Besides, we use big_dim as the size
@@ -145,7 +144,6 @@ BEGIN:
 		cl_ptr limbs = (cl_ptr)x->big.big_limbs;
 		cl_index size = x->big.big_dim * sizeof(mp_limb_t);
 		if (size) mark_contblock(limbs, size);
-#endif /* WITH_GMP */
 		break;
 	}
 	case t_ratio:
@@ -153,8 +151,8 @@ BEGIN:
 		mark_next(x->ratio.den);
 		break;
 
-#ifdef ECL_SHORT_FLOAT
-	case t_shortfloat:
+#ifdef ECL_SSE2
+	case t_sse_pack:
 #endif
 	case t_singlefloat:
 	case t_doublefloat:
@@ -661,14 +659,14 @@ sweep_phase(void)
                                 break;
 #ifdef ECL_THREADS
 			case t_lock:
-#if defined(_MSC_VER) || defined(__MINGW32__)
+#if defined(ECL_MS_WINDOWS_HOST)
 				CloseHandle(x->lock.mutex);
 #else
 				pthread_mutex_destroy(&x->lock.mutex);
 #endif
 				break;
 			case t_condition_variable:
-#if defined(_MSC_VER) || defined(__MINGW32__)
+#if defined(ECL_MS_WINDOWS_HOST)
 				CloseHandle(x->condition_variable.cv);
 #else
 				pthread_cond_destroy(&x->condition_variable.cv);

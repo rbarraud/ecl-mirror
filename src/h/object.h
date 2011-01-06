@@ -31,12 +31,11 @@ typedef int bool;
 #endif
 typedef unsigned char byte;
 
-#ifdef ECL_SHORT_FLOAT
-#undef ECL_SHORT_FLOAT
-#endif
+        /* #define ECL_EXTERNALIZABLE */
 
 /*
 	Implementation types.
+        Verify that it matches printer/write_ugly.d
 */
 typedef enum {
 	t_start = 0,
@@ -45,9 +44,6 @@ typedef enum {
 	   some routines, like cl_expt */
 	t_character = 2,	/* immediate character */
 	t_fixnum = 3,		/* immediate fixnum */
-#ifdef ECL_SHORT_FLOAT
-	t_shortfloat,
-#endif
 	t_bignum = 4,
 	t_ratio,
 	t_singlefloat,
@@ -83,6 +79,7 @@ typedef enum {
 #ifdef ECL_THREADS
 	t_process,
 	t_lock,
+	t_rwlock,
 	t_condition_variable,
 # ifdef ECL_SEMAPHORES
         t_semaphore,
@@ -92,6 +89,9 @@ typedef enum {
 	t_foreign,
 	t_frame,
 	t_weak_pointer,
+#ifdef ECL_SSE2
+	t_sse_pack,
+#endif
 	t_end,
 	t_other,
 	t_contiguous,		/*  contiguous block  */
@@ -118,6 +118,7 @@ typedef cl_object (*cl_objectfn_fixed)();
 	Definition of each implementation type.
 */
 
+#define ECL_TAG_BITS		2
 #define IMMEDIATE(o)		((cl_fixnum)(o) & 3)
 #define IMMEDIATE_TAG		3
 
@@ -184,8 +185,11 @@ typedef cl_object (*cl_objectfn_fixed)();
 #define ECL_PATHNAMEP(x)        ((IMMEDIATE(x) == 0) && ((x)->d.t == t_pathname))
 #define ECL_READTABLEP(x)       ((IMMEDIATE(x) == 0) && ((x)->d.t == t_readtable))
 #define ECL_FOREIGN_DATA_P(x)   ((IMMEDIATE(x) == 0) && ((x)->d.t == t_foreign))
+#ifdef ECL_SSE2
+#define ECL_SSE_PACK_P(x)       ((IMMEDIATE(x) == 0) && ((x)->d.t == t_sse_pack))
+#endif
 
-#define HEADER			int8_t t, m, padding[2]
+#define HEADER			int8_t t, m, padding1, padding2
 #define HEADER1(field)		int8_t t, m, field, padding
 #define HEADER2(field1,field2)	int8_t t, m, field1, field2
 
@@ -194,14 +198,14 @@ struct ecl_singlefloat {
 	float SFVAL;	/*  singlefloat value  */
 };
 #define	sf(obje)	(obje)->SF.SFVAL
-#define ecl_single_float(o) ((o)->SF.value)
+#define ecl_single_float(o) ((o)->SF.SFVAL)
 
 struct ecl_doublefloat {
 	HEADER;
 	double DFVAL;	/*  doublefloat value  */
 };
 #define	df(obje)	(obje)->DF.DFVAL
-#define ecl_double_float(o) ((o)->DF.value)
+#define ecl_double_float(o) ((o)->DF.DFVAL)
 
 #ifdef ECL_LONG_FLOAT
 struct ecl_long_float {
@@ -211,8 +215,6 @@ struct ecl_long_float {
 #define ecl_long_float(o) ((o)->longfloat.value)
 #endif
 
-#ifdef WITH_GMP
-
 struct ecl_bignum {
 	HEADER;
 	mpz_t big_num;
@@ -220,21 +222,6 @@ struct ecl_bignum {
 #define big_dim		big_num->_mp_alloc
 #define big_size	big_num->_mp_size
 #define big_limbs	big_num->_mp_d
-
-#else  /* WITH_GMP */
-
-# ifdef ecl_long_long_t
-     typedef long long int big_num_t;
-# else
-     typedef long int big_num_t; /* would it work? */
-# endif /* ecl_long_long_t */
-
-struct ecl_bignum {
-	HEADER;
-        big_num_t big_num;
-};
-
-#endif /* WITH_GMP */
 
 struct ecl_ratio {
 	HEADER;
@@ -722,6 +709,7 @@ struct ecl_codeblock {
 	cl_index cfuns_size;		/*  number of functions defined  */
 	const struct ecl_cfun *cfuns;
         cl_object source;		/*  common debug information for this block  */
+        cl_object refs;			/*  reference counter for the library  */
 };
 
 struct ecl_bytecodes {
@@ -888,8 +876,15 @@ struct ecl_dummy {
 };
 
 #ifdef ECL_THREADS
+enum {
+        ECL_PROCESS_INACTIVE = 0,
+        ECL_PROCESS_BOOTING,
+        ECL_PROCESS_ACTIVE,
+        ECL_PROCESS_EXITING,
+        ECL_PROCESS_DEAD
+};
 struct ecl_process {
-	HEADER1(active);
+	HEADER2(active, phase);
 	cl_object name;
 	cl_object function;
 	cl_object args;
@@ -909,6 +904,16 @@ struct ecl_lock {
         cl_object holder;       /* thread holding the lock or NIL */
 	cl_index counter;
         pthread_mutex_t mutex;
+};
+
+struct ecl_rwlock {
+	HEADER;
+        cl_object name;
+#ifdef ECL_RWLOCK
+        pthread_rwlock_t mutex;
+#else
+        cl_object mutex;
+#endif
 };
 
 struct ecl_condition_variable {
@@ -943,6 +948,40 @@ struct ecl_instance {		/*  instance header  */
 	cl_object *slots;	/*  instance slots  */
 };
 #endif /* CLOS */
+
+#ifdef ECL_SSE2
+union ecl_sse_data {
+	/* This member must be first in order for
+	   ecl_def_ct_sse_pack to work properly. */
+	uint8_t       b8[16];
+	int8_t        i8[16];
+
+	__m128        vf;
+	__m128i       vi;
+	__m128d       vd;
+
+#ifdef ecl_uint16_t
+	ecl_uint16_t  b16[8];
+	ecl_int16_t   i16[8];
+#endif
+#ifdef ecl_uint32_t
+	ecl_uint32_t  b32[4];
+	ecl_int32_t   i32[4];
+#endif
+#ifdef ecl_uint64_t
+	ecl_uint64_t  b64[2];
+	ecl_int64_t   i64[2];
+#endif
+
+	float         sf[4];
+	double        df[2];
+};
+
+struct ecl_sse_pack {
+	HEADER1(elttype);
+	union ecl_sse_data data;
+};
+#endif
 
 /*
 	Definition of lispunion.
@@ -987,6 +1026,7 @@ union cl_lispunion {
 #ifdef ECL_THREADS
 	struct ecl_process	process; 	/*  process  */
 	struct ecl_lock		lock; 		/*  lock  */
+	struct ecl_rwlock	rwlock; 	/*  read/write lock  */
         struct ecl_condition_variable condition_variable; /*  condition-variable */
 #endif
 #ifdef ECL_SEMAPHORES
@@ -996,6 +1036,9 @@ union cl_lispunion {
 	struct ecl_foreign	foreign; 	/*  user defined data type */
 	struct ecl_stack_frame	frame;		/*  stack frame  */
 	struct ecl_weak_pointer weak;		/*  weak pointers  */
+#ifdef ECL_SSE2
+	struct ecl_sse_pack     sse;
+#endif
 };
 
 /*

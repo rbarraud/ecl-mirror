@@ -1,6 +1,6 @@
 /* -*- mode: c; c-basic-offset: 8 -*- */
 /*
-    number.c -- Numeric constants.
+    number.c -- constructing numbers.
 */
 /*
     Copyright (c) 1984, Taiichi Yuasa and Masami Hagiya.
@@ -15,18 +15,14 @@
     See file '../Copyright' for full details.
 */
 
-#define ECL_INCLUDE_MATH_H
-#include <ecl/ecl.h>
 #include <float.h>
 #include <limits.h>
 #include <signal.h>
-#ifdef HAVE_FENV_H
-# define _GNU_SOURCE
-# include <fenv.h>
-#endif
-#include <float.h>
-#define ECL_DEFINE_FENV_CONSTANTS
+#define ECL_INCLUDE_MATH_H
+#include <ecl/ecl.h>
+#include <ecl/ecl-inl.h>
 #include <ecl/internal.h>
+#include <ecl/impl/math_fenv.h>
 
 #if defined(ECL_IEEE_FP) && defined(HAVE_FEENABLEEXCEPT)
 /*
@@ -41,29 +37,10 @@
  * X, where the status of the FPE control word is changed by
  * printf. We have two alternatives.
  */
-# ifdef ECL_IEEE_FP
-#  if defined(HAVE_FENV_H) && !defined(ECL_AVOID_FENV_H)
-#   define DO_DETECT_FPE(f)                                             \
-        if (isnan(f) || !isfinite(f))                                   \
-                ecl_deliver_fpe();
-#  else
-#   define DO_DETECT_FPE(f)                                             \
-	if (isnan(f)) {                                                 \
-                if (ecl_process_env()->trap_fpe_bits & FE_INVALID)      \
-                        cl_error(1, @'floating-point-invalid-operation'); \
-	} else if (!isfinite(f)) {                                      \
-                if (ecl_process_env()->trap_fpe_bits & FE_DIVBYZERO)    \
-                        cl_error(1, @'division-by-zero');               \
-	}
-#  endif
-# else
-#  define DO_DETECT_FPE(f)                                              \
-	if (isnan(f)) {                                                 \
-                cl_error(1, @'floating-point-invalid-operation');       \
-	} else if (!isfinite(f)) {                                      \
-                cl_error(1, @'division-by-zero');                       \
-	}
-# endif
+# define DO_DETECT_FPE(f) do {						\
+		unlikely_if (isnan(f)) ecl_deliver_fpe(FE_INVALID);	\
+		unlikely_if (!isfinite(f)) ecl_deliver_fpe(FE_OVERFLOW); \
+        } while (0)
 #endif
 
 cl_fixnum
@@ -72,14 +49,9 @@ fixint(cl_object x)
 	if (FIXNUMP(x))
 		return fix(x);
 	if (ECL_BIGNUMP(x)) {
-#ifdef WITH_GMP
 		if (mpz_fits_slong_p(x->big.big_num)) {
 			return mpz_get_si(x->big.big_num);
 		}
-#else  /* WITH_GMP */
-                if ( !((cl_fixnum)x->big.big_num < x->big.big_num) )
-                        return (cl_fixnum)x->big.big_num;
-#endif /* WITH_GMP */
 	}
 	FEwrong_type_argument(@[fixnum], x);
 }
@@ -92,15 +64,9 @@ fixnnint(cl_object x)
 		if (i >= 0)
 			return i;
 	} else if (ECL_BIGNUMP(x)) {
-#ifdef WITH_GMP
 		if (mpz_fits_ulong_p(x->big.big_num)) {
 			return mpz_get_ui(x->big.big_num);
 		}
-#else  /* WITH_GMP */
-                if ( x->big.big_num >= 0
-                     && !((cl_fixnum)x->big.big_num < x->big.big_num) )
-                        return (cl_fixnum)x->big.big_num;
-#endif /* WITH_GMP */
 	}
 	cl_error(9, @'simple-type-error', @':format-control',
 		    make_constant_base_string("Not a non-negative fixnum ~S"),
@@ -114,7 +80,7 @@ ecl_make_integer(cl_fixnum l)
 {
 	if (l > MOST_POSITIVE_FIXNUM || l < MOST_NEGATIVE_FIXNUM) {
                 cl_object z = _ecl_big_register0();
-                _ecl_big_set_si(z, l);
+                _ecl_big_set_fixnum(z, l);
                 return _ecl_big_register_copy(z);
 	}
 	return MAKE_FIXNUM(l);
@@ -125,7 +91,7 @@ ecl_make_unsigned_integer(cl_index l)
 {
 	if (l > MOST_POSITIVE_FIXNUM) {
                 cl_object z = _ecl_big_register0();
-                _ecl_big_set_ui(z, l);
+                _ecl_big_set_index(z, l);
                 return _ecl_big_register_copy(z);
 	}
 	return MAKE_FIXNUM(l);
@@ -238,9 +204,6 @@ ecl_to_int32_t(cl_object x) {
 #endif /* ecl_uint32_t */
 
 #if defined(ecl_uint64_t) && (FIXNUM_BITS < 64)
-# if !defined(WITH_GMP) || FIXNUM_BITS != 32
-#  error "Cannot handle ecl_uint64_t without GMP or 32/64 bits integer"
-# endif
 ecl_uint64_t
 ecl_to_uint64_t(cl_object x) {
         do {
@@ -359,9 +322,6 @@ ecl_make_long_long(ecl_long_long_t i) {
         return ecl_make_int64_t(i);
 }
 #  else
-#  if !defined(WITH_GMP)
-#   error "Cannot handle ecl_ulong_long_t without GMP"
-#  endif
 ecl_ulong_long_t
 ecl_to_unsigned_long_long(cl_object x) {
         do {
@@ -482,32 +442,29 @@ ecl_make_ratio(cl_object num, cl_object den)
 	return(r);
 }
 
-#if defined(HAVE_FENV_H) && !defined(ECL_AVOID_FENV_H)
 void
-ecl_deliver_fpe(void)
+ecl_deliver_fpe(int status)
 {
         cl_env_ptr env = ecl_process_env();
-        int bits = env->trap_fpe_bits;
-        if (fetestexcept(env->trap_fpe_bits)) {
+        int bits = status & env->trap_fpe_bits;
+	feclearexcept(FE_ALL_EXCEPT);
+        if (bits) {
                 cl_object condition;
-		if (fetestexcept(bits & FE_DIVBYZERO))
+		if (bits & FE_DIVBYZERO)
 			condition = @'division-by-zero';
-		else if (fetestexcept(bits & FE_INVALID))
+		else if (bits & FE_INVALID)
 			condition = @'floating-point-invalid-operation';
-		else if (fetestexcept(bits & FE_OVERFLOW))
+		else if (bits & FE_OVERFLOW)
 			condition = @'floating-point-overflow';
-		else if (fetestexcept(bits & FE_UNDERFLOW))
+		else if (bits & FE_UNDERFLOW)
 			condition = @'floating-point-underflow';
-		else if (fetestexcept(bits & FE_INEXACT))
+		else if (bits & FE_INEXACT)
 			condition = @'floating-point-inexact';
                 else
                         condition = @'arithmetic-error';
-                feclearexcept(FE_ALL_EXCEPT);
 		cl_error(1, condition);
         }
-        feclearexcept(FE_ALL_EXCEPT);
 }
-#endif
 
 cl_object
 ecl_make_singlefloat(float f)
@@ -584,11 +541,6 @@ ecl_make_complex(cl_object r, cl_object i)
 		case t_bignum:
 		case t_ratio:
 			break;
-#ifdef ECL_SHORT_FLOAT
-		case t_shortfloat:
-			r = make_shortfloat((float)ecl_to_double(r));
-			break;
-#endif
 		case t_singlefloat:
 			r = ecl_make_singlefloat((float)ecl_to_double(r));
 			break;
@@ -605,32 +557,6 @@ ecl_make_complex(cl_object r, cl_object i)
 			goto AGAIN;
 		}
 		break;
-#ifdef ECL_SHORT_FLOAT
-	case t_shortfloat:
-		switch (ti) {
-		case t_fixnum:
-		case t_bignum:
-		case t_ratio:
-			i = make_shortfloat((float)ecl_to_double(i));
-		case t_shortfloat:
-			break;
-		case t_singlefloat:
-			r = ecl_make_singlefloat((float)ecl_short_float(r));
-			break;
-		case t_doublefloat:
-			r = ecl_make_doublefloat((double)ecl_short_float(r));
-			break;
-#ifdef ECL_LONG_FLOAT
-		case t_longfloat:
-			r = ecl_make_longfloat((long double)ecl_short_float(r));
-			break;
-#endif
-		default:
-			i = ecl_type_error(@'complex',"imaginary part", i, @'real');
-			goto AGAIN;
-		}
-		break;
-#endif
 	case t_singlefloat:
 		switch (ti) {
 		case t_fixnum:
@@ -638,11 +564,6 @@ ecl_make_complex(cl_object r, cl_object i)
 		case t_ratio:
 			i = ecl_make_singlefloat((float)ecl_to_double(i));
 			break;
-#ifdef ECL_SHORT_FLOAT
-		case t_shortfloat:
-			i = ecl_make_singlefloat(ecl_short_float(i));
-			break;
-#endif
 		case t_singlefloat:
 			break;
 		case t_doublefloat:
@@ -663,9 +584,6 @@ ecl_make_complex(cl_object r, cl_object i)
 		case t_fixnum:
 		case t_bignum:
 		case t_ratio:
-#ifdef ECL_SHORT_FLOAT
-		case t_shortfloat:
-#endif
 		case t_singlefloat:
 			i = ecl_make_doublefloat(ecl_to_double(i));
 		case t_doublefloat:
@@ -697,12 +615,11 @@ ecl_make_complex(cl_object r, cl_object i)
 	return(c);
 }
 
-#ifdef WITH_GMP
 static cl_object
 into_bignum(cl_object bignum, cl_object integer)
 {
         if (FIXNUMP(integer)) {
-                mpz_set_si(bignum->big.big_num, fix(integer));
+                _ecl_big_set_fixnum(bignum, fix(integer));
         } else {
                 mpz_set(bignum->big.big_num, integer->big.big_num);
         }
@@ -737,12 +654,17 @@ prepare_ratio_to_float(cl_object num, cl_object den, int digits, cl_fixnum *scal
          * so that we have smaller operands.
          */
         cl_fixnum scale = remove_zeros(&den);
-        cl_fixnum num_size, den_size, delta;
-        num_size = ecl_integer_length(num);
-        den_size = ecl_integer_length(den);
-        delta = den_size - num_size;
+        cl_fixnum num_size = ecl_integer_length(num);
+        cl_fixnum delta = ecl_integer_length(den) - num_size;
         scale -= delta;
-        num = ecl_ash(num, digits + delta + 1);
+        {
+                cl_fixnum adjust = digits + delta + 1;
+                if (adjust > 0) {
+                        num = ecl_ash(num, adjust);
+                } else if (adjust < 0) {
+                        den = ecl_ash(den, -adjust);
+                }
+        }
         do {
                 cl_object fraction = ecl_truncate2(num, den);
                 cl_object rem = VALUES(1);
@@ -753,8 +675,8 @@ prepare_ratio_to_float(cl_object num, cl_object den, int digits, cl_fixnum *scal
                                         MAKE_FIXNUM(-1) :
                                         MAKE_FIXNUM(1);
                                 if (rem == MAKE_FIXNUM(0)) {
-                                        rem = cl_logand(2, fraction, MAKE_FIXNUM(2));
-                                        if (rem != MAKE_FIXNUM(0))
+                                        if (cl_logbitp(MAKE_FIXNUM(1), fraction)
+                                            != Cnil)
                                                 fraction = ecl_plus(fraction, one);
                                 } else {
                                         fraction = ecl_plus(fraction, one);
@@ -763,54 +685,54 @@ prepare_ratio_to_float(cl_object num, cl_object den, int digits, cl_fixnum *scal
                         *scaleout = scale - (digits + 1);
                         return fraction;
                 }
-                num = ecl_ash(num, -1);
+                den = ecl_ash(den, 1);
                 scale++;
-                --delta;
         } while (1);
 }
-#endif /* WITH_GMP */
 
 static float
 ratio_to_float(cl_object num, cl_object den)
 {
-#ifdef WITH_GMP
         cl_fixnum scale;
         cl_object bits = prepare_ratio_to_float(num, den, FLT_MANT_DIG, &scale);
-        float output = ecl_to_double(bits);
-        return ldexpf(output, scale);
+#if (FIXNUM_BITS-ECL_TAG_BITS) >= FLT_MANT_DIG
+        /* The output of prepare_ratio_to_float will always fit an integer */
+        float output = fix(bits);
 #else
-        return (float)(FIXNUMP(num) ? fix(num) : num->big.big_num) /
-                (float)(FIXNUMP(den) ? fix(den) : den->big.big_num);
+        float output = FIXNUMP(bits)? fix(bits) : _ecl_big_to_double(bits);
 #endif
+        return ldexpf(output, scale);
 }
 
 static double
 ratio_to_double(cl_object num, cl_object den)
 {
-#ifdef WITH_GMP
         cl_fixnum scale;
         cl_object bits = prepare_ratio_to_float(num, den, DBL_MANT_DIG, &scale);
-        double output = ecl_to_double(bits);
-        return ldexp(output, scale);
+#if (FIXNUM_BITS-ECL_TAG_BITS) >= DBL_MANT_DIG
+        /* The output of prepare_ratio_to_float will always fit an integer */
+        double output = fix(bits);
 #else
-        return (double)(FIXNUMP(num) ? fix(num) : num->big.big_num) /
-                (double)(FIXNUMP(den) ? fix(den) : den->big.big_num);
+        double output = FIXNUMP(bits)? fix(bits) : _ecl_big_to_double(bits);
 #endif
+        return ldexp(output, scale);
 }
 
 #ifdef ECL_LONG_FLOAT
 static long double
 ratio_to_long_double(cl_object num, cl_object den)
 {
-#ifdef WITH_GMP
         cl_fixnum scale;
         cl_object bits = prepare_ratio_to_float(num, den, LDBL_MANT_DIG, &scale);
-        long double output = ecl_to_long_double(bits);
-        return ldexpl(output, scale);
+#if (FIXNUM_BITS-ECL_TAG_BITS) >= LDBL_MANT_DIG
+        /* The output of prepare_ratio_to_float will always fit an integer */
+        long double output = fix(bits);
 #else
-        return (long double)(FIXNUMP(num) ? fix(num) : num->big.big_num) /
-                (long double)(FIXNUMP(den) ? fix(den) : den->big.big_num);
+        long double output = FIXNUMP(bits)?
+                (long double)fix(bits) :
+                _ecl_big_to_long_double(bits);
 #endif
+        return ldexpl(output, scale);
 }
 #endif /* ECL_LONG_FLOAT */
 
@@ -821,13 +743,9 @@ ecl_to_double(cl_object x)
 	case t_fixnum:
 		return((double)(fix(x)));
 	case t_bignum:
-		return _ecl_big_to_double(x);
+		return ratio_to_double(x, MAKE_FIXNUM(1));
 	case t_ratio:
                 return ratio_to_double(x->ratio.num, x->ratio.den);
-#ifdef ECL_SHORT_FLOAT
-	case t_singlefloat:
-		return ecl_short_float(x);
-#endif
 	case t_singlefloat:
 		return (double)sf(x);
 	case t_doublefloat:
@@ -848,22 +766,10 @@ ecl_to_long_double(cl_object x)
 	switch(type_of(x)) {
 	case t_fixnum:
 		return (long double)fix(x);
-	case t_bignum: {
-                long double output = 0;
-                int i, l = mpz_size(x->big.big_num), exp = 0;
-                for (i = 0; i < l; i++) {
-                        output += mpz_getlimbn(x->big.big_num, i);
-                        output = ldexpl(output, -GMP_LIMB_BITS);
-                }
-                output = ldexpl(output, l * GMP_LIMB_BITS);
-                return (mpz_sgn(x->big.big_num) < 0) ? -output : output;
-        }
+	case t_bignum:
+                return ratio_to_long_double(x, MAKE_FIXNUM(1));
 	case t_ratio:
                 return ratio_to_long_double(x->ratio.num, x->ratio.den);
-#ifdef ECL_SHORT_FLOAT
-	case t_singlefloat:
-		return ecl_short_float(x);
-#endif
 	case t_singlefloat:
 		return (long double)sf(x);
 	case t_doublefloat:
@@ -886,11 +792,6 @@ cl_rational(cl_object x)
 	case t_bignum:
 	case t_ratio:
 		break;
-#ifdef ECL_SHORT_FLOAT
-	case t_shortfloat:
-		d = ecl_short_float(x);
-		goto GO_ON;
-#endif
 	case t_singlefloat:
 		d = sf(x);
 		goto GO_ON;
@@ -904,8 +805,8 @@ cl_rational(cl_object x)
 			e -= DBL_MANT_DIG;
 			x = double_to_integer(ldexp(d, DBL_MANT_DIG));
                         if (e != 0) {
-                                x = ecl_times(cl_expt(MAKE_FIXNUM(FLT_RADIX),
-                                                      MAKE_FIXNUM(e)),
+                                x = ecl_times(ecl_expt(MAKE_FIXNUM(FLT_RADIX),
+                                                       MAKE_FIXNUM(e)),
                                               x);
                         }
 		}
@@ -922,8 +823,8 @@ cl_rational(cl_object x)
                         d = ldexpl(d, LDBL_MANT_DIG);
 			x = long_double_to_integer(d);
 			if (e != 0) {
-				x = ecl_times(cl_expt(MAKE_FIXNUM(FLT_RADIX),
-                                                      MAKE_FIXNUM(e)),
+				x = ecl_times(ecl_expt(MAKE_FIXNUM(FLT_RADIX),
+                                                       MAKE_FIXNUM(e)),
                                               x);
 			}
 		}
@@ -982,102 +883,4 @@ float_to_integer(float d)
                 _ecl_big_set_d(z, d);
                 return _ecl_big_register_copy(z);
 	}
-}
-
-void
-init_number(void)
-{
-	cl_object num;
-
-	num = ecl_make_singlefloat(FLT_MAX);
-	ECL_SET(@'MOST-POSITIVE-SHORT-FLOAT', num);
-	ECL_SET(@'MOST-POSITIVE-SINGLE-FLOAT', num);
-
-	num = ecl_make_singlefloat(-FLT_MAX);
-	ECL_SET(@'MOST-NEGATIVE-SHORT-FLOAT', num);
-	ECL_SET(@'MOST-NEGATIVE-SINGLE-FLOAT', num);
-
-	num = ecl_make_singlefloat(FLT_MIN);
-	ECL_SET(@'LEAST-POSITIVE-SHORT-FLOAT', num);
-	ECL_SET(@'LEAST-POSITIVE-SINGLE-FLOAT', num);
-	ECL_SET(@'LEAST-POSITIVE-NORMALIZED-SHORT-FLOAT', num);
-	ECL_SET(@'LEAST-POSITIVE-NORMALIZED-SINGLE-FLOAT', num);
-
-	num = ecl_make_singlefloat(-FLT_MIN);
-	ECL_SET(@'LEAST-NEGATIVE-SHORT-FLOAT', num);
-	ECL_SET(@'LEAST-NEGATIVE-SINGLE-FLOAT', num);
-	ECL_SET(@'LEAST-NEGATIVE-NORMALIZED-SHORT-FLOAT', num);
-	ECL_SET(@'LEAST-NEGATIVE-NORMALIZED-SINGLE-FLOAT', num);
-
-	num = ecl_make_doublefloat(DBL_MAX);
-	ECL_SET(@'MOST-POSITIVE-DOUBLE-FLOAT', num);
-#ifdef ECL_LONG_FLOAT
-	num = ecl_make_longfloat(LDBL_MAX);
-#endif
-	ECL_SET(@'MOST-POSITIVE-LONG-FLOAT', num);
-
-	num = ecl_make_doublefloat(-DBL_MAX);
-	ECL_SET(@'MOST-NEGATIVE-DOUBLE-FLOAT', num);
-#ifdef ECL_LONG_FLOAT
-	num = ecl_make_longfloat(-LDBL_MAX);
-#endif
-	ECL_SET(@'MOST-NEGATIVE-LONG-FLOAT', num);
-
-	num = ecl_make_doublefloat(DBL_MIN);
-	ECL_SET(@'LEAST-POSITIVE-DOUBLE-FLOAT', num);
-	ECL_SET(@'LEAST-POSITIVE-NORMALIZED-DOUBLE-FLOAT', num);
-#ifdef ECL_LONG_FLOAT
-	num = ecl_make_longfloat(LDBL_MIN);
-#endif
-	ECL_SET(@'LEAST-POSITIVE-LONG-FLOAT', num);
-	ECL_SET(@'LEAST-POSITIVE-NORMALIZED-LONG-FLOAT', num);
-
-	num = ecl_make_doublefloat(-DBL_MIN);
-	ECL_SET(@'LEAST-NEGATIVE-DOUBLE-FLOAT', num);
-	ECL_SET(@'LEAST-NEGATIVE-NORMALIZED-DOUBLE-FLOAT', num);
-#ifdef ECL_LONG_FLOAT
-	num = ecl_make_longfloat(-LDBL_MIN);
-#endif
-	ECL_SET(@'LEAST-NEGATIVE-LONG-FLOAT', num);
-	ECL_SET(@'LEAST-NEGATIVE-NORMALIZED-LONG-FLOAT', num);
-
- 	cl_core.singlefloat_zero = ecl_alloc_object(t_singlefloat);
- 	sf(cl_core.singlefloat_zero) = (float)0;
- 	cl_core.doublefloat_zero = ecl_alloc_object(t_doublefloat);
- 	df(cl_core.doublefloat_zero) = (double)0;
-#ifdef ECL_LONG_FLOAT
- 	cl_core.longfloat_zero = ecl_alloc_object(t_longfloat);
- 	cl_core.longfloat_zero->longfloat.value = (long double)0;
-#endif
-#ifdef ECL_SIGNED_ZERO
- 	cl_core.singlefloat_minus_zero = ecl_alloc_object(t_singlefloat);
- 	sf(cl_core.singlefloat_minus_zero) = (float)-0.0;
- 	cl_core.doublefloat_minus_zero = ecl_alloc_object(t_doublefloat);
- 	df(cl_core.doublefloat_minus_zero) = (double)-0.0;
-# ifdef ECL_LONG_FLOAT
- 	cl_core.longfloat_minus_zero = ecl_alloc_object(t_longfloat);
- 	cl_core.longfloat_minus_zero->longfloat.value = (long double)-0.0;
-# endif
-#else
-        cl_core.singlefloat_minus_zero = cl_core.singlefloat_zero;
-        cl_core.doublefloat_minus_zero = cl_core.doublefloat_zero;
-# ifdef ECL_LONG_FLOAT
-        cl_core.longfloat_minus_zero = cl_core.longfloat_zero;
-# endif
-#endif
-	cl_core.plus_half = ecl_make_ratio(MAKE_FIXNUM(1), MAKE_FIXNUM(2));
-	cl_core.minus_half = ecl_make_ratio(MAKE_FIXNUM(-1), MAKE_FIXNUM(2));
-	cl_core.imag_unit =
-	    ecl_make_complex(ecl_make_singlefloat(0.0), ecl_make_singlefloat(1.0));
-	cl_core.minus_imag_unit =
-	    ecl_make_complex(ecl_make_singlefloat(0.0), ecl_make_singlefloat(-1.0));
-	cl_core.imag_two =
-	    ecl_make_complex(ecl_make_singlefloat(0.0), ecl_make_singlefloat(2.0));
-
-#ifdef ECL_LONG_FLOAT
-	ECL_SET(@'pi', ecl_make_longfloat((long double)ECL_PI_L));
-#else
-	ECL_SET(@'pi', ecl_make_doublefloat((double)ECL_PI_D));
-#endif
-        ECL_SET(@'*random-state*', ecl_make_random_state(Ct));
 }

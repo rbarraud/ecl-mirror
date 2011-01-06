@@ -14,11 +14,9 @@
 */
 
 #include <string.h>
+#define ECL_INCLUDE_FFI_H
 #include <ecl/ecl.h>
 #include <ecl/internal.h>
-#ifdef HAVE_LIBFFI
-# include <ffi/ffi.h>
-#endif
 
 static const cl_object ecl_aet_to_ffi_table[aet_bc+1] = {
 	@':void', /* aet_object */
@@ -61,43 +59,68 @@ static const cl_object ecl_aet_to_ffi_table[aet_bc+1] = {
 	@':char' /* aet_bc */
 };
 
-static const cl_object ecl_foreign_type_table[] = {
-	@':char',
-	@':unsigned-char',
-	@':byte',
-	@':unsigned-byte',
-	@':short',
-	@':unsigned-short',
-	@':int',
-	@':unsigned-int',
-	@':long',
-	@':unsigned-long',
+#define AUX_PTR(type) \
+	((struct { char a[1]; union { type c[1]; char d[sizeof(type)]; } b; } *)0)
+#ifdef __GNUC__
+typedef struct {
+	cl_object name;
+	cl_index size;
+	cl_index alignment;
+} ecl_foreign_type_record;
+# define ALIGNMENT(tag) (ecl_foreign_type_table[tag].alignment)
+# define FFI_DESC(symbol,type)			\
+  {symbol, sizeof(type), (AUX_PTR(type)->b.d - AUX_PTR(type)->a)}
+#else
+typedef struct {
+	cl_object name;
+	cl_index size;
+	char *d, *a;
+} ecl_foreign_type_record;
+#define ALIGNMENT(tag) (ecl_foreign_type_table[tag].d - ecl_foreign_type_table[tag].a)
+#define AUX_PTR(type) \
+	((struct { char a[1]; union { type c[1]; char d[sizeof(type)]; } b; } *)0)
+#define FFI_DESC(symbol,type) \
+  {symbol, sizeof(type), AUX_PTR(type)->b.d, AUX_PTR(type)->a}
+#endif
+
+static const ecl_foreign_type_record
+ecl_foreign_type_table[] = {
+	FFI_DESC(@':char', char),
+	FFI_DESC(@':unsigned-char', unsigned char),
+	FFI_DESC(@':byte', ecl_int8_t),
+        FFI_DESC(@':unsigned-byte', ecl_uint8_t),
+	FFI_DESC(@':short', short),
+	FFI_DESC(@':unsigned-short', unsigned short),
+	FFI_DESC(@':int', int),
+	FFI_DESC(@':unsigned-int', unsigned int),
+	FFI_DESC(@':long', long),
+	FFI_DESC(@':unsigned-long', unsigned long),
 #ifdef ecl_uint8_t
-        @':int8-t',
-        @':uint8-t',
+        FFI_DESC(@':int8-t', ecl_int8_t),
+        FFI_DESC(@':uint8-t', ecl_uint8_t),
 #endif
 #ifdef ecl_uint16_t
-        @':int16-t',
-        @':uint16-t',
+        FFI_DESC(@':int16-t', ecl_int16_t),
+        FFI_DESC(@':uint16-t', ecl_uint16_t),
 #endif
 #ifdef ecl_uint32_t
-        @':int32-t',
-        @':uint32-t',
+        FFI_DESC(@':int32-t', ecl_int32_t),
+        FFI_DESC(@':uint32-t', ecl_uint32_t),
 #endif
 #ifdef ecl_uint64_t
-        @':int64-t',
-        @':uint64-t',
+        FFI_DESC(@':int64-t', ecl_int64_t),
+        FFI_DESC(@':uint64-t', ecl_uint64_t),
 #endif
 #ifdef ecl_long_long_t
-        @':long-long',
-        @':unsigned-long-long',
+        FFI_DESC(@':long-long', long long),
+        FFI_DESC(@':unsigned-long-long', unsigned long long),
 #endif
-	@':pointer-void',
-	@':cstring',
-	@':object',
-	@':float',
-	@':double',
-	@':void'
+	FFI_DESC(@':pointer-void', void *),
+	FFI_DESC(@':cstring', char *),
+	FFI_DESC(@':object', cl_object),
+	FFI_DESC(@':float', float),
+	FFI_DESC(@':double', double),
+	{@':void', 0, 0}
 };
 
 #ifdef ECL_DYNAMIC_FFI
@@ -106,45 +129,6 @@ static const cl_object ecl_foreign_cc_table[] = {
 	@':stdcall'
 };
 #endif
-
-static unsigned int ecl_foreign_type_size[] = {
-	sizeof(char),
-	sizeof(unsigned char),
-	sizeof(int8_t),
-	sizeof(uint8_t),
-	sizeof(short),
-	sizeof(unsigned short),
-	sizeof(int),
-	sizeof(unsigned int),
-	sizeof(long),
-	sizeof(unsigned long),
-#ifdef ecl_uint8_t
-        sizeof(ecl_int8_t),
-        sizeof(ecl_uint8_t),
-#endif
-#ifdef ecl_uint16_t
-        sizeof(ecl_int16_t),
-        sizeof(ecl_uint16_t),
-#endif
-#ifdef ecl_uint32_t
-        sizeof(ecl_int32_t),
-        sizeof(ecl_uint32_t),
-#endif
-#ifdef ecl_uint64_t
-        sizeof(ecl_int64_t),
-        sizeof(ecl_uint64_t),
-#endif
-#ifdef ecl_long_long_t
-        sizeof(long long),
-        sizeof(unsigned long long),
-#endif
-	sizeof(void *),
-	sizeof(char *),
-	sizeof(cl_object),
-	sizeof(float),
-	sizeof(double),
-	0
-};
 
 #ifdef HAVE_LIBFFI
 static struct {
@@ -334,6 +318,20 @@ si_foreign_data_tag(cl_object f)
 }
 
 cl_object
+si_foreign_data_equal(cl_object f1, cl_object f2)
+{
+	if (ecl_unlikely(!ECL_FOREIGN_DATA_P(f1))) {
+                FEwrong_type_only_arg(@[si::foreign-data-address], f1,
+                                      @[si::foreign-data]);
+	}
+	if (ecl_unlikely(!ECL_FOREIGN_DATA_P(f2))) {
+                FEwrong_type_only_arg(@[si::foreign-data-address], f2,
+                                      @[si::foreign-data]);
+	}
+	@(return ((f1->foreign.data == f2->foreign.data)? Ct : Cnil))
+}
+
+cl_object
 si_foreign_data_pointer(cl_object f, cl_object andx, cl_object asize,
 			cl_object tag)
 {
@@ -397,16 +395,25 @@ si_foreign_data_set(cl_object f, cl_object andx, cl_object value)
 	@(return value)
 }
 
-enum ecl_ffi_tag
-ecl_foreign_type_code(cl_object type)
+static int
+foreign_type_code(cl_object type)
 {
 	int i;
 	for (i = 0; i <= ECL_FFI_VOID; i++) {
-		if (type == ecl_foreign_type_table[i])
-			return (enum ecl_ffi_tag)i;
+		if (type == ecl_foreign_type_table[i].name)
+			return i;
 	}
-	FEerror("~A does not denote an elementary foreign type.", 1, type);
-	return ECL_FFI_VOID;
+        return -1;
+}
+
+enum ecl_ffi_tag
+ecl_foreign_type_code(cl_object type)
+{
+	int i = foreign_type_code(type);
+        if (ecl_unlikely(i < 0)) {
+                FEerror("~A does not denote an elementary foreign type.", 1, type);
+        }
+	return (enum ecl_ffi_tag)i;
 }
 
 #ifdef HAVE_LIBFFI
@@ -543,32 +550,42 @@ ecl_foreign_data_set_elt(void *p, enum ecl_ffi_tag tag, cl_object value)
 #ifdef ecl_uint8_t
         case ECL_FFI_INT8_T:
                 *(ecl_int8_t *)p = fixint(value);
+                break;
         case ECL_FFI_UINT8_T:
                 *(ecl_uint8_t *)p = fixnnint(value);
+                break;
 #endif
 #ifdef ecl_uint16_t
         case ECL_FFI_INT16_T:
                 *(ecl_int16_t *)p = ecl_to_int16_t(value);
+                break;
         case ECL_FFI_UINT16_T:
                 *(ecl_uint16_t *)p = ecl_to_uint16_t(value);
+                break;
 #endif
 #ifdef ecl_uint32_t
         case ECL_FFI_INT32_T:
                 *(ecl_int32_t *)p = ecl_to_int32_t(value);
+                break;
         case ECL_FFI_UINT32_T:
                 *(ecl_uint32_t *)p = ecl_to_uint32_t(value);
+                break;
 #endif
 #ifdef ecl_uint64_t
         case ECL_FFI_INT64_T:
                 *(ecl_int64_t *)p = ecl_to_int64_t(value);
+                break;
         case ECL_FFI_UINT64_T:
                 *(ecl_uint64_t *)p = ecl_to_uint64_t(value);
+                break;
 #endif
 #ifdef ecl_long_long_t
         case ECL_FFI_LONG_LONG:
                 *(ecl_long_long_t *)p = ecl_to_long_long(value);
+                break;
         case ECL_FFI_UNSIGNED_LONG_LONG:
                 *(ecl_ulong_long_t *)p = ecl_to_unsigned_long_long(value);
+                break;
 #endif
 	case ECL_FFI_POINTER_VOID:
 		*(void **)p = ecl_foreign_data_pointer_safe(value);
@@ -596,7 +613,8 @@ si_foreign_data_ref_elt(cl_object f, cl_object andx, cl_object type)
 	cl_index ndx = fixnnint(andx);
 	cl_index limit = f->foreign.size;
 	enum ecl_ffi_tag tag = ecl_foreign_type_code(type);
-	if (ecl_unlikely(ndx >= limit || (ndx + ecl_foreign_type_size[tag] > limit))) {
+	if (ecl_unlikely(ndx >= limit ||
+                         (ndx + ecl_foreign_type_table[tag].size > limit))) {
 		FEerror("Out of bounds reference into foreign data type ~A.", 1, f);
 	}
 	if (ecl_unlikely(type_of(f) != t_foreign)) {
@@ -612,7 +630,8 @@ si_foreign_data_set_elt(cl_object f, cl_object andx, cl_object type, cl_object v
 	cl_index ndx = fixnnint(andx);
 	cl_index limit = f->foreign.size;
 	enum ecl_ffi_tag tag = ecl_foreign_type_code(type);
-	if (ecl_unlikely(ndx >= limit || ndx + ecl_foreign_type_size[tag] > limit)) {
+	if (ecl_unlikely(ndx >= limit ||
+                         ndx + ecl_foreign_type_table[tag].size > limit)) {
 		FEerror("Out of bounds reference into foreign data type ~A.", 1, f);
 	}
 	if (ecl_unlikely(type_of(f) != t_foreign)) {
@@ -627,7 +646,20 @@ cl_object
 si_size_of_foreign_elt_type(cl_object type)
 {
 	enum ecl_ffi_tag tag = ecl_foreign_type_code(type);
-	@(return MAKE_FIXNUM(ecl_foreign_type_size[tag]))
+	@(return MAKE_FIXNUM(ecl_foreign_type_table[tag].size))
+}
+
+cl_object
+si_alignment_of_foreign_elt_type(cl_object type)
+{
+	enum ecl_ffi_tag tag = ecl_foreign_type_code(type);
+	@(return MAKE_FIXNUM(ALIGNMENT(tag)))
+}
+
+cl_object
+si_foreign_elt_type_p(cl_object type)
+{
+	@(return ((foreign_type_code(type) < 0)? Cnil : Ct))
 }
 
 cl_object

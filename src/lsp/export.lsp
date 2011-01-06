@@ -75,7 +75,7 @@
 		   (si::while %dolist-var
 		      (setq ,var (first %dolist-var))
 		      ,@body
-		      (setq %dolist-var (rest %dolist-var)))
+		      (setq %dolist-var (cons-cdr %dolist-var)))
 		   ,(when exit `(setq ,var nil))
 		   ,@exit)))))))
   (si::fset 'dolist f t))
@@ -94,6 +94,9 @@
 		 (simple-program-error "Syntax error in ~A:~%~A" 'DOTIMES whole))
 	     (multiple-value-bind (declarations body)
 		 (process-declarations body nil)
+               (when (integerp expr)
+                 (setq declarations
+                       (cons `(type (integer 0 ,expr) ,var) declarations)))
 	       `(block nil
 		 (let* ((%dotimes-var ,expr)
 			(,var 0))
@@ -124,7 +127,7 @@
 	       (case (length c)
 		 ((1 2)
 		  (setq vl (cons c vl)))
-		 ((3)
+		 (3
 		  (setq vl (cons (butlast c) vl)
 			step (list* (third c) (first c) step)))
 		 (t

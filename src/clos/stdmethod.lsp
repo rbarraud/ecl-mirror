@@ -56,3 +56,6 @@
 (defclass standard-reader-method (standard-accessor-method) ())
 
 (defclass standard-writer-method (standard-accessor-method) ())
+
+(defmethod shared-initialize ((method standard-method) slot-names &rest initargs)
+  (add-method-keywords (call-next-method)))

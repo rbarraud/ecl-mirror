@@ -15,6 +15,14 @@
 ;;; Welcome to bare.lsp. Let's bring this instance up!
 ;;;")
 
+(sys:*make-constant '+ecl-optimization-settings+ 
+  '((optimize (safety 2) (speed 1) (debug 1) (space 1))
+    (ext:no-check-arguments-type)))
+(sys:*make-constant '+ecl-unsafe-declarations+
+  '(optimize (safety 0) (speed 3) (debug 0) (space 0)))
+(sys:*make-constant '+ecl-safe-declarations+
+  '(optimize (safety 2) (speed 1) (debug 1) (space 1)))
+
 (si::pathname-translations "SRC" `(("**;*.*.*" "@true_srcdir@/**/*.*")))
 (si::pathname-translations "EXT" `(("**;*.*.*" "@true_srcdir@/../contrib/**/*.*")))
 (si::pathname-translations "BUILD" `(("**;*.*.*" "@true_builddir@/**/*.*")))
@@ -90,6 +98,11 @@
       #-(or cross ecl-min) "cmp.so")
 
 ;;;
+;;; * Change the place where temporary files go to
+;;;
+(si::pathname-translations "TMP" '(("**;*.*.*" "@true_builddir@/**/*.*")))
+
+;;;
 ;;; * Remove documentation from compiled files
 ;;;
 (setq si::*keep-documentation* nil)
@@ -132,20 +145,20 @@
 
 (make-package "ASDF")
 
-(defun build-fake-asdf (name)
+(defun build-fake-asdf (name &optional (filename (string name)))
   (let ((path (make-pathname :name name :type "asd")))
     (with-open-file (*standard-output* path
                      :direction :output :if-exists :supersede
                      :if-does-not-exist :create)
-    (print `(defsystem ,name :class asdf::prebuilt-system
-               :lib ,(format nil "SYS:~A" (string name))
-               :components ((:compiled-file ,(string name))))))
+      (print `(defsystem ,name :class asdf::prebuilt-system
+                         :lib ,(format nil "SYS:~A" filename)
+                         :components ((:compiled-file ,filename)))))
     path))
 
 (defun build-module (name sources &key additional-files
                      (builtin nil) (dir "build:")
                      ((:prefix si::*init-function-prefix*) "EXT"))
-  (proclaim '(optimize (safety 2) (speed 1)))
+  (mapc #'proclaim +ecl-optimization-settings+)
   (let* ((name (string-downcase name)))
     (when additional-files
       (setf *module-files* (append additional-files *module-files*)))

@@ -322,6 +322,8 @@ static compiler_record database[] = {
   {@'list', c_list, 1},
   {@'list*', c_listA, 1},
   {@'endp', c_endp, 1},
+  {@'si::cons-car', c_car, 1},
+  {@'si::cons-cdr', c_cdr, 1},
   {NULL, NULL, 1}
 };
 
@@ -2068,7 +2070,6 @@ static int
 compile_form(cl_env_ptr env, cl_object stmt, int flags) {
         const cl_compiler_ptr c_env = env->c_env;
 	cl_object code_walker = ECL_SYM_VAL(env, @'si::*code-walker*');
-	compiler_record *l;
 	cl_object function;
 	bool push = flags & FLAG_PUSH;
 	int new_flags;
@@ -2129,9 +2130,10 @@ compile_form(cl_env_ptr env, cl_object stmt, int flags) {
 		stmt = ECL_CONS_CAR(stmt);
 		goto QUOTED;
 	}
-	for (l = database; l->symbol != OBJNULL; l++) {
-		/*cl_print(1, l->symbol);*/
-		if (l->symbol == function) {
+	{
+		cl_object index = ecl_gethash(function, cl_core.compiler_dispatch);
+		if (index != OBJNULL) {
+			compiler_record *l = database + fix(index);
 			c_env->lexical_level += l->lexical_increment;
 			if (c_env->stepping && function != @'function' &&
 			    c_env->lexical_level)
@@ -2418,6 +2420,7 @@ c_listA(cl_env_ptr env, cl_object args, int flags)
 	}
 	/* END: SEARCH DECLARE */
 
+        declarations = cl_nreverse(declarations);
 	@(return declarations body documentation specials)
 @)
 
@@ -2497,7 +2500,7 @@ LOOP:
 	if (ATOM(lambda_list)) {
 		if (lambda_list == Cnil)
 			goto OUTPUT;
-		else if (context == @'function')
+		else if (context == @'function' || context == @'ftype')
 			goto ILLEGAL_LAMBDA;
 		else {
 			v = lambda_list;
@@ -2552,7 +2555,7 @@ REST:		if (stage >= AT_REST)
 	case AT_OPTIONALS:
 		spp = Cnil;
 		init = Cnil;
-		if (!ATOM(v)) {
+		if (!ATOM(v) && (context != @'ftype')) {
 			cl_object x = v;
 			v = ECL_CONS_CAR(x);
                         x = ECL_CONS_CDR(x);
@@ -2582,6 +2585,13 @@ REST:		if (stage >= AT_REST)
 	case AT_KEYS:
 		init = Cnil;
 		spp = Cnil;
+                if (context == @'ftype') {
+                        if (!CONSP(v))
+                                goto ILLEGAL_LAMBDA;
+                        key = ECL_CONS_CAR(v);
+                        v = CADR(v);
+                        goto KEY_PUSH;
+                }
 		if (!ATOM(v)) {
 			cl_object x = v;
 			v = ECL_CONS_CAR(x);
@@ -2609,6 +2619,7 @@ REST:		if (stage >= AT_REST)
 			key = ecl_intern(ecl_symbol_name(v), cl_core.keyword_package,
 					 &intern_flag);
 		}
+        KEY_PUSH:
 		nkey++;
 		push(key, keys);
 		push_var(v, keys);
@@ -2887,3 +2898,18 @@ si_make_lambda(cl_object name, cl_object rest)
                 return output;
 	}
 @)
+
+void
+init_compiler()
+{
+	cl_object dispatch_table =
+		cl_core.compiler_dispatch =
+		cl__make_hash_table(@'eq', MAKE_FIXNUM(128), /* size */
+                                    cl_core.rehash_size,
+                                    cl_core.rehash_threshold,
+				    Cnil); /* thread-safe */
+	int i;
+	for (i = 0; database[i].symbol; i++) {
+		ecl_sethash(database[i].symbol, dispatch_table, MAKE_FIXNUM(i));
+	}
+}

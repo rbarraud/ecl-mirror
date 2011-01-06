@@ -120,7 +120,8 @@
 
 ;;;; Miscellaneous Environment Things
 
-
+(defmacro loop-unsafe (&rest x)
+  `(locally (declare (ext:assume-right-type)) ,@x))
 
 ;;;The LOOP-Prefer-POP feature makes LOOP generate code which "prefers" to use POP or
 ;;; its obvious expansion (prog1 (car x) (setq x (cdr x))).  Usually this involves
@@ -1303,13 +1304,18 @@ collected result will be returned as the value of the LOOP."
   (cond ((or (null name) (null dtype) (eq dtype t)) nil)
 	((symbolp name)
 	 (unless (or (eq dtype t) (member (the symbol name) *loop-nodeclare*))
-	   (let ((dtype #-cmu dtype
-			#+cmu
-			(let ((init (loop-typed-init dtype)))
-			  (if (typep init dtype)
-			      dtype
-			      `(or (member ,init) ,dtype)))))
-	     (push `(type ,dtype ,name) *loop-declarations*))))
+           ;; Allow redeclaration of a variable. This can be used by
+           ;; the loop constructors to make the type more and more
+           ;; precise as we add keywords
+           (let ((previous (find name *loop-declarations*
+                                 :key #'(lambda (d)
+                                          (and (consp d)
+                                               (= (length d) 3)
+                                               (eq (cons-car d) 'type)
+                                               (third d))))))
+             (if previous
+                 (setf (second previous) dtype)
+                 (push `(type ,dtype ,name) *loop-declarations*)))))
 	((consp name)
 	 (cond ((consp dtype)
 		(loop-declare-variable (car name) (car dtype))
@@ -1641,11 +1647,12 @@ collected result will be returned as the value of the LOOP."
 
 (defun loop-do-repeat ()
   (loop-disallow-conditional :repeat)
-  (let ((form (loop-get-form))
-	(type 'real))
-    (let ((var (loop-make-variable (gensym) form type)))
-      (push `(when (minusp (decf ,var)) (go end-loop)) *loop-before-loop*)
-      (push `(when (minusp (decf ,var)) (go end-loop)) *loop-after-body*)
+  (let* ((form (loop-get-form))
+         (type (if (fixnump form) 'fixnum 'real))
+         (var (loop-make-variable (gensym) form type))
+         (form `(loop-unsafe (when (minusp (decf ,var)) (go end-loop)))))
+      (push form *loop-before-loop*)
+      (push form *loop-after-body*)
       ;; FIXME: What should
       ;;   (loop count t into a
       ;;         repeat 3
@@ -1653,7 +1660,7 @@ collected result will be returned as the value of the LOOP."
       ;;         finally (return (list a b)))
       ;; return: (3 3) or (4 3)? PUSHes above are for the former
       ;; variant, L-P-B below for the latter.
-      #+nil (loop-pseudo-body `(when (minusp (decf ,var)) (go end-loop))))))
+      #+nil (loop-pseudo-body form)))
 
 (defun loop-when-it-variable ()
   (declare (si::c-local))
@@ -1727,7 +1734,7 @@ collected result will be returned as the value of the LOOP."
   (let ((stepper (cond ((loop-tequal (car *loop-source-code*) :by)
 			(loop-pop-source)
 			(loop-get-form))
-		       (t '(function cdr)))))
+		       (t '(function cons-cdr)))))
     (cond ((and (consp stepper) (eq (car stepper) 'quote))
 	   (loop-warn "Use of QUOTE around stepping function in LOOP will be left verbatim.")
 	   (values `(funcall ,stepper ,listvar) nil))
@@ -1785,12 +1792,13 @@ collected result will be returned as the value of the LOOP."
 	#-LOOP-Prefer-POP (declare (ignore step-function))
 	(let* ((first-endtest `(endp ,listvar))
 	       (other-endtest first-endtest)
-	       (step `(,var (car ,listvar)))
+	       (step `(,var (cons-car ,listvar)))
 	       (pseudo-step `(,listvar ,list-step)))
 	  (when (and constantp (listp list-value))
 	    (setq first-endtest (null list-value)))
-	  #+LOOP-Prefer-POP (when (eq step-function 'cdr)
-			      (setq step `(,var (pop ,listvar)) pseudo-step nil))
+	  #+LOOP-Prefer-POP
+          (when (eq step-function 'cons-cdr)
+            (setq step `(,var (pop ,listvar)) pseudo-step nil))
 	  `(,other-endtest ,step () ,pseudo-step
 	    ,@(and (not (eq first-endtest other-endtest))
 		   `(,first-endtest ,step () ,pseudo-step))))))))
@@ -1936,7 +1944,6 @@ collected result will be returned as the value of the LOOP."
 
 ;;;; Master Sequencer Function
 
-
 (defun loop-sequencer (indexv indexv-type indexv-user-specified-p
 			  variable variable-type
 			  sequence-variable sequence-type
@@ -2022,11 +2029,26 @@ collected result will be returned as the value of the LOOP."
 		(setq endform (loop-typed-init indexv-type) inclusive-iteration t))
 	      (when endform (setq testfn (if inclusive-iteration  '< '<=)))
 	      (setq step (if (eql stepby 1) `(1- ,indexv) `(- ,indexv ,stepby)))))
+     (setq step `(loop-unsafe ,step))
      (when testfn (setq test (hide-variable-reference t indexv `(,testfn ,indexv ,endform))))
      (when step-hack
        (setq step-hack `(,variable ,(hide-variable-reference indexv-user-specified-p indexv step-hack))))
      (let ((first-test test) (remaining-tests test))
        (when (and stepby-constantp start-constantp limit-constantp)
+         ;; We can make the number type more precise when we know the
+         ;; start, end and step values.
+         (let ((new-type (typecase (+ start-value stepby limit-value)
+                           (integer (if (and (fixnump start-value)
+                                             (fixnump limit-value))
+                                        'fixnum
+                                        indexv-type))
+                           (single-float 'single-float)
+                           (double-float 'double-float)
+                           (long-float 'long-float)
+                           (short-float 'short-float)
+                           (t indexv-type))))
+           (unless (subtypep indexv-type new-type)
+             (loop-declare-variable indexv new-type)))
 	 (when (setq first-test (funcall (symbol-function testfn) start-value limit-value))
 	   (setq remaining-tests t)))
        `(() (,indexv ,(hide-variable-reference t indexv step)) ,remaining-tests ,step-hack

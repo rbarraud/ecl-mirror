@@ -89,8 +89,7 @@
 	body-c1form)))
 
 (defun fun-referred-local-vars (fun)
-  (remove-if #'(lambda (v) (member (var-kind v) '(SPECIAL GLOBAL REPLACED)))
-	     (fun-referred-vars fun)))
+  (remove-if #'global-var-p (fun-referred-vars fun)))
 
 (defun compute-fun-closure-type (fun)
   (labels
@@ -200,17 +199,26 @@
   (c2expr body)
   (when block-p (wt-nl "}")))
 
+(defun c1decl-body (decls body)
+  (if (null decls)
+      (c1progn body)
+      (let* ((*cmp-env* (reduce #'add-one-declaration decls
+                                :initial-value (cmp-env-copy *cmp-env*))))
+        (c1progn body))))
+
 (defun c1locally (args)
   (multiple-value-bind (body ss ts is other-decl)
       (c1body args t)
-    (c1declare-specials ss)
-    (check-vdecl nil ts is)
-    (c1decl-body other-decl body)))
+    (if (or ss ts is other-decl)
+        (let ((*cmp-env* (cmp-env-copy)))
+          (c1declare-specials ss)
+          (check-vdecl nil ts is)
+          (c1decl-body other-decl body))
+        (c1progn body))))
 
 (defun c1macrolet (args)
   (check-args-number 'MACROLET args 1)
-  (let ((*cmp-env* (cmp-env-copy)))
-    (cmp-env-register-macrolet (first args) *cmp-env*)
+  (let ((*cmp-env* (cmp-env-register-macrolet (first args) (cmp-env-copy))))
     (c1locally (cdr args))))
 
 (defun c1symbol-macrolet (args)
@@ -255,16 +263,3 @@
           (*temp* *temp*))
       (unwind-exit (list 'CALL-NORMAL fun (coerce-locs (inline-args args))))
       (close-inline-blocks))))
-
-;;; ----------------------------------------------------------------------
-
-(put-sysprop 'FLET 'C1SPECIAL 'c1flet)
-(put-sysprop 'LABELS 'C1SPECIAL 'c1labels)
-(put-sysprop 'LOCALLY 'C1SPECIAL 'c1locally)
-(put-sysprop 'MACROLET 'C1SPECIAL 'c1macrolet)
-(put-sysprop 'SYMBOL-MACROLET 'C1SPECIAL 'c1symbol-macrolet)
-
-(put-sysprop 'LOCALS 'c2 'c2locals)	; replaces both c2flet and c2lables
-;;; c2macrolet is not defined, because MACROLET is replaced by PROGN
-;;; during Pass 1.
-(put-sysprop 'CALL-LOCAL 'C2 'c2call-local)

@@ -67,7 +67,7 @@ init_random_state()
 	cl_object a = ecl_alloc_simple_base_string(bytes);
 	ulong *mt = (ulong*)a->base_string.self;
 	int j;
-#if !defined(_MSC_VER) && !defined(__MINGW32__)
+#if !defined(ECL_MS_WINDOWS_HOST)
 	FILE *fp = fopen("/dev/urandom","r");
 	if (fp) {
 		fread(mt, sizeof(*mt), MT_N, fp);
@@ -128,7 +128,6 @@ generate_double(cl_object state)
 
 #endif
 
-#ifdef WITH_GMP
 static mp_limb_t
 generate_limb(cl_object state)
 {
@@ -149,12 +148,10 @@ generate_limb(cl_object state)
 # endif
 #endif
 }
-#endif
 
 static cl_object
 random_integer(cl_object limit, cl_object state)
 {
-#ifdef WITH_GMP
         cl_index bit_length = ecl_integer_length(limit);
         cl_object buffer;
         if (bit_length <= FIXNUM_BITS)
@@ -165,9 +162,6 @@ random_integer(cl_object limit, cl_object state)
                         generate_limb(state);
         }
         return cl_mod(buffer, limit);
-#else
-        return ecl_floor1(ecl_times(x, cl_rational(ecl_make_doublefloat(d))));
-#endif
 }
 
 static cl_object
@@ -186,12 +180,6 @@ rando(cl_object x, cl_object rs)
 	case t_bignum:
 		z = random_integer(x, rs->random.value);
 		break;
-#ifdef ECL_SHORT_FLOAT
-	case t_shortfloat:
-		z = make_shortfloat(ecl_short_float(x) *
-                                    (float)generate_double(rs->random.value));
-		break;
-#endif
 	case t_singlefloat:
 		z = ecl_make_singlefloat(sf(x) *
                                          (float)generate_double(rs->random.value));

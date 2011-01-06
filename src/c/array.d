@@ -18,34 +18,8 @@
 #include <limits.h>
 #include <string.h>
 #include <ecl/ecl.h>
+#define ECL_DEFINE_AET_SIZE
 #include <ecl/internal.h>
-
-static const cl_index ecl_aet_size[] = {
-  sizeof(cl_object),          /* aet_object */
-  sizeof(float),              /* aet_sf */
-  sizeof(double),             /* aet_df */
-  0,                          /* aet_bit: cannot be handled with this code */
-  sizeof(cl_fixnum),          /* aet_fix */
-  sizeof(cl_index),           /* aet_index */
-  sizeof(uint8_t),            /* aet_b8 */
-  sizeof(int8_t),             /* aet_i8 */
-#ifdef ecl_uint16_t
-  sizeof(ecl_uint16_t),
-  sizeof(ecl_int16_t),
-#endif
-#ifdef ecl_uint32_t
-  sizeof(ecl_uint32_t),
-  sizeof(ecl_int32_t),
-#endif
-#ifdef ecl_uint64_t
-  sizeof(ecl_uint64_t),
-  sizeof(ecl_int64_t),
-#endif
-#ifdef ECL_UNICODE
-  sizeof(ecl_character),      /* aet_ch */
-#endif
-  sizeof(unsigned char)       /* aet_bc */
-};
 
 static const cl_object ecl_aet_name[] = {
         Ct,                   /* aet_object */
@@ -74,7 +48,6 @@ static const cl_object ecl_aet_name[] = {
         @'base-char'          /* aet_bc */
 };
 
-static void displace (cl_object from, cl_object to, cl_object offset);
 static void check_displaced (cl_object dlist, cl_object orig, cl_index newdim);
 
 static void
@@ -98,7 +71,8 @@ out_of_bounds_error(cl_index ndx, cl_object x)
 void
 FEwrong_dimensions(cl_object a, cl_index rank)
 {
-        cl_object list = cl_make_list(rank, @':initial-element', @'*');
+        cl_object list = cl_make_list(3, MAKE_FIXNUM(rank),
+                                      @':initial-element', @'*');
         cl_object type = cl_list(3, @'array', @'*', list);
         FEwrong_type_argument(type, a);
 }
@@ -257,15 +231,43 @@ ecl_aref1(cl_object x, cl_index index)
         return ecl_aref_unsafe(x, index);
 }
 
+void *
+ecl_row_major_ptr(cl_object x, cl_index index, cl_index bytes)
+{
+	cl_index idx, elt_size, offset;
+	cl_elttype elt_type;
+
+	if (ecl_unlikely(!ECL_ARRAYP(x))) {
+		FEwrong_type_nth_arg(@[aref], 1, x, @[array]);
+	}
+
+	elt_type = x->array.elttype;
+	if (ecl_unlikely(elt_type == aet_bit || elt_type == aet_object))
+		FEerror("In ecl_row_major_ptr: Specialized array expected, element type ~S found.",
+			1,ecl_elttype_to_symbol(elt_type));
+
+	elt_size = ecl_aet_size[elt_type];
+	offset = index*elt_size;
+
+	/* don't check bounds if bytes == 0 */
+        if (ecl_unlikely(bytes > 0 && offset + bytes > x->array.dim*elt_size)) {
+                FEwrong_index(@[row-major-aref], x, -1, MAKE_FIXNUM(index),
+                              x->array.dim);
+        }
+
+	return x->array.self.b8 + offset;
+}
+
 /*
 	Internal function for setting array elements:
 
 		(si:aset value array dim0 ... dimN)
 */
-@(defun si::aset (v x &rest dims)
+@(defun si::aset (x &rest dims)
 @ {
 	cl_index i, j;
 	cl_index r = narg - 2;
+	cl_object v;
 	switch (type_of(x)) {
 	case t_array:
 		if (ecl_unlikely(r != x->array.rank))
@@ -291,6 +293,7 @@ ecl_aref1(cl_object x, cl_index index)
 	default:
                 FEwrong_type_nth_arg(@[si::aset], 1, x, @[array]);
 	}
+	v = cl_va_arg(dims);
 	@(return ecl_aset_unsafe(x, j, v))
 } @)
 
@@ -403,7 +406,10 @@ si_make_pure_array(cl_object etype, cl_object dims, cl_object adj,
 	cl_object x;
 	if (FIXNUMP(dims)) {
 		return si_make_vector(etype, dims, adj, fillp, displ, disploff);
-	}
+	} else if (ecl_unlikely(!ECL_LISTP(dims))) {
+                FEwrong_type_nth_arg(@[make-array], 1, dims,
+                                     cl_list(3, @'or', @'list', @'fixnum'));
+        }
 	r = ecl_length(dims);
 	if (ecl_unlikely(r >= ARANKLIM)) {
 		FEerror("The array rank, ~R, is too large.", 1, MAKE_FIXNUM(r));
@@ -447,7 +453,7 @@ si_make_pure_array(cl_object etype, cl_object dims, cl_object adj,
 	if (Null(displ))
 		ecl_array_allocself(x);
 	else
-		displace(x, displ, disploff);
+		ecl_displace(x, displ, disploff);
 	@(return x);
 }
 
@@ -514,7 +520,7 @@ si_make_vector(cl_object etype, cl_object dim, cl_object adj,
 	if (Null(displ))
 		ecl_array_allocself(x);
 	else
-		displace(x, displ, disploff);
+		ecl_displace(x, displ, disploff);
 	@(return x)
 }
 
@@ -668,6 +674,17 @@ ecl_elttype_to_symbol(cl_elttype aet)
         return ecl_aet_name[aet];
 }
 
+cl_object
+si_array_element_type_byte_size(cl_object type) {
+        cl_elttype aet = ECL_ARRAYP(type) ?
+                type->array.elttype :
+                ecl_symbol_to_elttype(type);
+	cl_object size = MAKE_FIXNUM(ecl_aet_size[aet]);
+	if (aet == aet_bit)
+		size = ecl_make_ratio(MAKE_FIXNUM(1),MAKE_FIXNUM(CHAR_BIT));
+	@(return size ecl_elttype_to_symbol(aet))
+}
+
 static void *
 address_inc(void *address, cl_fixnum inc, cl_elttype elt_type)
 {
@@ -734,8 +751,8 @@ cl_array_element_type(cl_object a)
 	displaced to the to-array, so the from-array is pushed to the
 	cdr of the to-array's array.displaced.
 */
-static void
-displace(cl_object from, cl_object to, cl_object offset)
+void
+ecl_displace(cl_object from, cl_object to, cl_object offset)
 {
 	cl_index j;
 	void *base;
@@ -1070,7 +1087,7 @@ si_replace_array(cl_object olda, cl_object newa)
 		cl_object offset;
 		cl_array_displacement(other_array);
 		offset = VALUES(1);
-		displace(other_array, newa, offset);
+		ecl_displace(other_array, newa, offset);
 	}
 	switch (type_of(olda)) {
 	case t_array:
@@ -1104,17 +1121,28 @@ ecl_copy_subarray(cl_object dest, cl_index i0, cl_object orig,
 	if (i1 + l > orig->array.dim) {
 		l = orig->array.dim - i1;
 	}
-	if (t != ecl_array_elttype(orig) || t == aet_bit) {
-		while (l--) {
-			ecl_aset_unsafe(dest, i0++, ecl_aref_unsafe(orig, i1++));
-		}
-	} else if (t >= 0 && t <= aet_last_type) {
+        if (dest == orig && i0 > i1) {
+                if (t != ecl_array_elttype(orig) || t == aet_bit) {
+                        for (i0 += l, i1 += l; l--; ) {
+                                ecl_aset_unsafe(dest, --i0,
+                                                ecl_aref_unsafe(orig, --i1));
+                        }
+                } else {
+                        cl_index elt_size = ecl_aet_size[t];
+                        memmove(dest->array.self.bc + i0 * elt_size,
+                                orig->array.self.bc + i1 * elt_size,
+                                l * elt_size);
+                }
+        } else if (t != ecl_array_elttype(orig) || t == aet_bit) {
+                while (l--) {
+                        ecl_aset_unsafe(dest, i0++,
+                                        ecl_aref_unsafe(orig, i1++));
+                }
+        } else {
 		cl_index elt_size = ecl_aet_size[t];
 		memcpy(dest->array.self.bc + i0 * elt_size,
-		       orig->array.self.bc + i1 * elt_size,
-		       l * elt_size);
-	} else {
-		FEbad_aet();
+                       orig->array.self.bc + i1 * elt_size,
+                       l * elt_size);
 	}
 }
 
@@ -1230,6 +1258,16 @@ ecl_reverse_subarray(cl_object x, cl_index i0, cl_index i1)
 	default:
 		FEbad_aet();
 	}
+}
+
+cl_object
+si_copy_subarray(cl_object dest, cl_object start0,
+                 cl_object orig, cl_object start1, cl_object length)
+{
+        ecl_copy_subarray(dest, fixnnint(start0),
+                          orig, fixnnint(start1),
+                          fixnnint(length));
+        @(return dest)
 }
 
 cl_object

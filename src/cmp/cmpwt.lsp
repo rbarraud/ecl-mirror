@@ -14,110 +14,16 @@
 
 (in-package "COMPILER")
 
-(defvar *wt-string-size* 0)
-
+;;; ======================================================================
+;;;
+;;; DATA FILES
+;;;
 ;;; Each lisp compiled file consists on code and a data section. Whenever an
 ;;; #'in-package toplevel form is found, a read-time evaluated expression is
 ;;; inserted in the data section which changes the current package for the
 ;;; rest of it. This way it is possible to save some space by writing the
 ;;; symbol's package only when it does not belong to the current package.
 
-(defun wt-label (label)
-  (when (cdr label) (wt-nl1 "L" (car label) ":;")))
-
-(defun wt-filtered-comment (text stream single-line)
-  (declare (string text))
-  (if single-line
-      (progn
-	(fresh-line stream)
-	(princ "/*	" stream))
-      (format stream "~50T/*  "))
-  (let* ((l (1- (length text))))
-    (declare (fixnum l))
-    (dotimes (n l)
-      (let ((c (schar text n)))
-	(princ c stream)
-	(when (and (char= c #\*) (char= (schar text (1+ n)) #\/))
-	  (princ #\\ stream))))
-    (princ (schar text l) stream))
-  (format stream "~70T*/")
-  )
-
-(defun do-wt-comment (message-or-format args single-line-p)
-  (unless (and (symbolp message-or-format) (not (symbol-package message-or-format)))
-    (wt-filtered-comment (if (stringp message-or-format)
-                             (if args
-                                 (apply #'format nil message-or-format args)
-                                 message-or-format)
-                             (princ-to-string message-or-format))
-                         *compiler-output1*
-                         single-line-p)))
-
-(defun wt-comment (message &rest extra)
-  (do-wt-comment message extra nil))
-
-(defun wt-comment-nl (message &rest extra)
-  (do-wt-comment message extra t))
-
-(defun wt1 (form)
-  (typecase form
-    ((or STRING INTEGER CHARACTER)
-     (princ form *compiler-output1*))
-    ((or DOUBLE-FLOAT SINGLE-FLOAT)
-     (format *compiler-output1* "~10,,,,,,'eG" form))
-    (LONG-FLOAT
-     (format *compiler-output1* "~,,,,,,'eEl" form))
-    (VAR (wt-var form))
-    (t (wt-loc form)))
-  nil)
-
-(defun wt-h1 (form)
-  (if (consp form)
-      (let ((fun (get-sysprop (car form) 'wt-loc)))
-	(if fun
-	    (let ((*compiler-output1* *compiler-output2*))
-	      (apply fun (cdr form)))
-	    (cmperr "The location ~s is undefined." form)))
-      (princ form *compiler-output2*))
-  nil)
-
-;;; This routine converts lisp data into C-strings. We have to take
-;;; care of escaping special characteres with backslashes. We also have
-;;; to split long lines using  the fact that multiple strings are joined
-;;; together by the compiler.
-;;;
-(defun wt-filtered-data (string stream &optional one-liner)
-  (let ((N (length string))
-	(wt-data-column 80))
-    (incf *wt-string-size* (1+ N)) ; 1+ accounts for a blank space
-    (format stream (if one-liner "\"" "~%\""))
-    (dotimes (i N)
-      (decf wt-data-column)
-      (when (< wt-data-column 0)
-	(format stream "\"~% \"")
-	(setq wt-data-column 79))
-      (let ((x (aref string i)))
-	(cond
-	  ((or (< (char-code x) 32)
-	       (> (char-code x) 127))
-	   (case x
-	     ; We avoid a trailing backslash+newline because some preprocessors
-	     ; remove them.
-	     (#\Newline (princ "\\n" stream))
-	     (#\Tab (princ "\\t" stream))
-	     (t (format stream "\\~3,'0o" (char-code x)))))
-	  ((char= x #\\)
-	   (princ "\\\\" stream))
-	  ((char= x #\")
-	   (princ "\\\"" stream))
-	  (t (princ x stream)))))
-    (princ (if one-liner "\""  " \"") stream)
-    string))
-
-;;; ======================================================================
-;;;
-;;; DATA FILES
-;;;
 
 (defun data-permanent-storage-size ()
   (length *permanent-objects*))
@@ -140,6 +46,17 @@
 (defun data-get-all-objects ()
   ;; We collect all objects that are to be externalized, but filter out
   ;; those which will be created by a lisp form.
+  (loop for array in (list *permanent-objects* *temporary-objects*)
+     nconc (loop for (object vv-record . rest) across array
+              collect (cond ((gethash object *load-objects*)
+                             0)
+                            ((vv-used-p vv-record)
+                             object)
+                            (t
+                             (cmpnote "Constant value optimized away or not used~%~A"
+                                      object)
+                             0))))
+  #+(or)
   (loop for i in (nconc (map 'list #'first *permanent-objects*)
 			(map 'list #'first *temporary-objects*))
 	collect (if (gethash i *load-objects*)
@@ -162,21 +79,35 @@
             (*compiler-constants*
              (format stream "~%#define compiler_data_text NULL~%#define compiler_data_text_size 0~%")
              (setf output (concatenate 'vector (data-get-all-objects))))
+            #+externalizable
             ((plusp (data-size))
-             (wt-data-begin stream)
-             (wt-filtered-data
-              (subseq (prin1-to-string (data-get-all-objects)) 1)
-              stream)
-             (wt-data-end stream)))
+             (let* ((data (concatenate 'vector (data-get-all-objects)))
+                    (raw (si::serialize data))
+                    (l (length raw)))
+               (format stream "~%#define compiler_data_text_size ~D~%static const uint8_t compiler_data_text[~D] = {" l l)
+               (loop for byte across raw
+                  for i from 0
+                  when (zerop (mod i 20))
+                  do (terpri stream)
+                  do (format stream "~D," byte))
+               (format stream "};")))
+            #-externalizable
+            ((plusp (data-size))
+             (let ((*wt-string-size* 0)
+                   (*wt-data-column* 80))
+               (princ "static const char compiler_data_text[] = " stream)
+               (wt-filtered-data
+                (subseq (prin1-to-string (data-get-all-objects)) 1)
+                stream)
+               (princ #\; stream)
+               (format stream "~%#define compiler_data_text_size ~D~%"
+                       *wt-string-size*))))
       (when must-close
         (close must-close))
       (data-init)
       output)))
 
 (defun wt-data-begin (stream)
-  (setq *wt-string-size* 0)
-  (setq *wt-data-column* 80)
-  (princ "static const char compiler_data_text[] = " stream)
   nil)
 
 (defun wt-data-end (stream)
@@ -207,16 +138,18 @@
   ;; end up having two non-EQ objects created for the same value.
   (let* ((test (if *compiler-constants* 'eq 'equal))
 	 (array (if permanent *permanent-objects* *temporary-objects*))
-	 (vv (if permanent 'VV 'VV-temp))
 	 (x (or (and (not permanent)
 		     (find object *permanent-objects* :test test
 			   :key #'first))
 		(find object array :test test :key #'first)))
 	 (next-ndx (length array))
+         (forced duplicate)
 	 found)
     (cond ((add-static-constant object))
           ((and x duplicate)
-	   (setq x (list vv next-ndx))
+	   (setq x (make-vv :location next-ndx :used-p forced
+                            :permanent-p permanent
+                            :value object))
 	   (vector-push-extend (list object x next-ndx) array)
 	   x)
 	  (x
@@ -226,7 +159,9 @@
 		(multiple-value-setq (found x) (si::mangle-name object)))
 	   x)
 	  (t
-	   (setq x (list vv next-ndx))
+	   (setq x (make-vv :location next-ndx :used-p forced
+                            :permanent-p permanent
+                            :value object))
 	   (vector-push-extend (list object x next-ndx) array)
 	   (unless *compiler-constants*
 	     (add-load-form object x))
@@ -264,13 +199,54 @@
 
 (defun static-single-float-builder (name value stream)
   (let* ((*read-default-float-format* 'single-float)
-         (*print-readably* t))
-    (format stream "ecl_def_ct_single_float(~A,~S,static,const);" name value stream)))
+	 (*print-readably* t))
+    (format stream "ecl_def_ct_single_float(~A,~S,static,const);"
+	    name value stream)))
 
 (defun static-double-float-builder (name value stream)
   (let* ((*read-default-float-format* 'double-float)
-         (*print-readably* t))
-    (format stream "ecl_def_ct_single_float(~A,~S,static,const);" name value stream)))
+	 (*print-readably* t))
+    (format stream "ecl_def_ct_double_float(~A,~S,static,const);"
+	    name value stream)))
+
+#+long-float
+(defun static-long-float-builder (name value stream)
+  (let* ((*read-default-float-format* 'long-float)
+	 (*print-readably* t))
+    (format stream "ecl_def_ct_long_float(~A,~SL,static,const);"
+	    name value stream)))
+
+(defun static-rational-builder (name value stream)
+  (let* ((*read-default-float-format* 'double-float)
+	 (*print-readably* t))
+    (format stream
+	    "ecl_def_ct_ratio(~A,MAKE_FIXNUM(~D),MAKE_FIXNUM(~D),static,const);"
+	    name (numerator value) (denominator value))))
+
+(defun static-constant-delegate (name value stream)
+  (funcall (static-constant-expression value)
+	   name value stream))
+
+(defun static-complex-builder (name value stream)
+  (let* ((*read-default-float-format* 'double-float)
+	 (*print-readably* t)
+	 (name-real (concatenate 'string name "_real"))
+	 (name-imag (concatenate 'string name "_imag")))
+    (static-constant-delegate name-real (realpart value) stream)
+    (terpri stream)
+    (static-constant-delegate name-imag (imagpart value) stream)
+    (terpri stream)
+    (format stream
+	    "ecl_def_ct_complex(~A,&~A_data,&~A_data,static,const);"
+	    name name-real name-imag)))
+
+#+sse2
+(defun static-sse-pack-builder (name value stream)
+  (let* ((bytes (ext:sse-pack-to-vector value '(unsigned-byte 8)))
+	 (type-code (nth-value 1 (ext:sse-pack-element-type value))))
+    (format stream
+	    "ecl_def_ct_sse_pack(~A,~A~{,~A~});"
+	    name type-code (coerce bytes 'list))))
 
 (defun static-constant-builder (format value)
   (lambda (name stream)
@@ -279,8 +255,24 @@
 (defun static-constant-expression (object)
   (typecase object
     (base-string #'static-base-string-builder)
-    ;;(single-float #'static-single-float-builder)
-    ;;(double-float #'static-double-float-builder)
+    (ratio (and (static-constant-expression (numerator object))
+		(static-constant-expression (denominator object))
+		#'static-rational-builder))
+    (single-float (and (not (si:float-nan-p object))
+		       (not (si:float-infinity-p object))
+		       #'static-single-float-builder))
+    (double-float (and (not (si:float-nan-p object))
+		       (not (si:float-infinity-p object))
+		       #'static-double-float-builder))
+    #+long-float
+    (long-float (and (not (si:float-nan-p object))
+		     (not (si:float-infinity-p object))
+		     #'static-long-float-builder))
+    (complex (and (static-constant-expression (realpart object))
+		  (static-constant-expression (imagpart object))
+		  #'static-complex-builder))
+    #+sse2
+    (ext:sse-pack #'static-sse-pack-builder)
     (t nil)))
 
 (defun add-static-constant (object)
@@ -296,4 +288,31 @@
             (when builder
               (let* ((c-name (format nil "_ecl_static_~D" (length *static-constants*))))
                 (push (list object c-name builder) *static-constants*)
-                `(VV ,c-name))))))))
+                (make-vv :location c-name :value object))))))))
+
+(defun wt-vv-index (index permanent-p)
+  (cond ((not (numberp index))
+         (wt index))
+        (permanent-p
+         (wt "VV[" index "]"))
+        (t
+         (wt "VVtemp[" index "]"))))
+
+(defun set-vv-index (loc index permanent-p)
+  (wt-nl) (wt-vv-index index permanent-p) (wt "= ")
+  (wt-coerce-loc :object loc)
+  (wt ";"))
+
+(defun wt-vv (vv-loc)
+  (setf (vv-used-p vv-loc) t)
+  (wt-vv-index (vv-location vv-loc) (vv-permanent-p vv-loc)))
+
+(defun set-vv (loc vv-loc)
+  (setf (vv-used-p vv-loc) t)
+  (set-vv-index loc (vv-location vv-loc) (vv-permanent-p vv-loc)))
+
+(defun vv-type (loc)
+  (let ((value (vv-value loc)))
+    (if (and value (not (si::fixnump value)))
+        (type-of value)
+        t)))

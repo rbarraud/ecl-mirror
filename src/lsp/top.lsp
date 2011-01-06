@@ -21,7 +21,7 @@
 
 (in-package "SYSTEM")
 
-(export '(*break-readtable* *break-on-warnings* *break-enable*
+(export '(*break-readtable* *break-on-warnings*
 	  *tpl-evalhook* *tpl-prompt-hook*))
 
 (defvar *quit-tag* (cons nil nil))
@@ -38,12 +38,6 @@
 (defvar *eof* (cons nil nil))
 
 (defvar *last-error* nil)
-
-(defvar *break-enable* t
-  "ECL specific.
-When an error is signaled, control enters a break loop only if the value of
-this variable is non-NIL.  The initial value is T, but ECL automatically
-rebinds this variable to NIL when control enters a break loop.")
 
 (defvar *break-message* nil)
 
@@ -400,9 +394,7 @@ The top-level loop of ECL. It is called by default when ECL is invoked."
       (in-package "CL-USER")
 
       (unless *lisp-initialized*
-	(let ((*break-enable* nil))
-	  ;; process command arguments
-	  (process-command-args))
+        (process-command-args)
 	(format t "ECL (Embeddable Common-Lisp) ~A" (lisp-implementation-version))
 	(format t "~%Copyright (C) 1984 Taiichi Yuasa and Masami Hagiya~@
 Copyright (C) 1993 Giuseppe Attardi~@
@@ -412,8 +404,7 @@ under certain conditions; see file 'Copyright' for details.")
 	(format *standard-output* "~%Type :h for Help.  ")
 	(setq *lisp-initialized* t))
 
-      (let ((*break-enable* t)
-	    (*tpl-level* -1))
+      (let ((*tpl-level* -1))
 	(tpl))
       0)))
 
@@ -476,8 +467,7 @@ under certain conditions; see file 'Copyright' for details.")
 (defvar *debug-status* nil)
 
 (defun simple-terminal-interrupt ()
-  (let ((*break-enable* t))
-    (error 'ext:interactive-interrupt)))
+  (error 'ext:interactive-interrupt))
 
 #+threads
 (defun show-process-list (&optional (process-list (mp:all-processes)))
@@ -552,6 +542,7 @@ Use special code 0 to cancel this operation.")
 		 ((:prompt-hook *tpl-prompt-hook*) *tpl-prompt-hook*)
   		 (broken-at nil)
 		 (quiet nil))
+  #-ecl-min
   (declare (c::policy-debug-ihs-frame))
   (let* ((*ihs-base* *ihs-top*)
 	 (*ihs-top* (if broken-at (ihs-search t broken-at) (ihs-top)))
@@ -897,6 +888,23 @@ Use special code 0 to cancel this operation.")
 		output = ecl_make_doublefloat(*p);
 		break;
 	}
+#ifdef ECL_SSE2
+	case _ecl_int_sse_pack_loc: {
+		__m128i *p = (__m128i*)value;
+		output = ecl_make_int_sse_pack(_mm_loadu_si128(p));
+		break;
+	}
+	case _ecl_float_sse_pack_loc: {
+		__m128 *p = (__m128*)value;
+		output = ecl_make_float_sse_pack(_mm_loadu_ps((float*)p));
+		break;
+	}
+	case _ecl_double_sse_pack_loc: {
+		__m128d *p = (__m128d*)value;
+		output = ecl_make_double_sse_pack(_mm_loadu_pd((double*)p));
+		break;
+	}
+#endif
 	default: {
 		ecl_base_char *p = (ecl_base_char*)value;
 		output = CODE_CHAR(*p);
@@ -1128,7 +1136,7 @@ Use special code 0 to cancel this operation.")
 (defun break-where ()
   (if (<= *tpl-level* 0)
       #-threads (format t "~&Top level.~%")
-      #+threads (format t "~&Top level in: ~S.~%" mp:*current-process*)
+      #+threads (format t "~&Top level in: ~A.~%" mp:*current-process*)
     (tpl-print-current)))
 
 (defun tpl-print-current ()
@@ -1138,7 +1146,7 @@ Use special code 0 to cancel this operation.")
       (format t " [Evaluation of: ~S]"
               (function-lambda-expression (ihs-fun *ihs-current*)))))
   #-threads (terpri)
-  #+threads (format t " In: ~S.~%" mp:*current-process*)
+  #+threads (format t " In: ~A.~%" mp:*current-process*)
   (let ((fun (ihs-fun *ihs-current*)))
     (when (and (symbolp fun) (fboundp fun))
       (setf fun (fdefinition fun)))
@@ -1363,7 +1371,7 @@ package."
     (progn
       (format *error-output*
 	      "~&Excessive debugger depth! Probable infinite recursion!~%~
-             Quitting process: ~S.~%" mp:*current-process*)
+             Quitting process: ~A.~%" mp:*current-process*)
       (when (< (+ *default-debugger-maximum-depth* 3) *break-level*)
 	;; we tried to be polite but it does not seem to work.
 	(quit -1))
@@ -1395,54 +1403,54 @@ package."
   (loop for process in *console-waiting-list*
      for rank from 1
      do (format t (if (eq process mp:*current-process*)
-                      "   >~D: ~s~%" 
-                      "    ~D: ~s~%")
+                      "   >~D: ~A~%" 
+                      "    ~D: ~A~%")
                 rank process))
   (terpri)
   (values))
 
 (defun default-debugger (condition)
-  (unless *break-enable*
-    (throw *quit-tag* nil))
-  (let* ((*standard-input* *debug-io*)
-         (*standard-output* *debug-io*)
-         ;;(*tpl-prompt-hook* "[dbg] ")
-         (*print-pretty* nil)
-         (*print-circle* t)
-         (*readtable* (or *break-readtable* *readtable*))
-         (*break-message* (format nil "~&~A~%" condition))
-         (*break-level* (1+ *break-level*))
-         (break-level *break-level*)
-         (*break-env* nil))
-    (check-default-debugger-runaway)
-    #+threads
-    ;; We give our process priority for grabbing the console.
-    (setq *console-owner* mp:*current-process*)
-    ;; As of ECL 9.4.1 making a normal function return from the debugger
-    ;; seems to be a very bad idea! Basically, it dumps core...
-    (when (listen *debug-io*)
-      (clear-input *debug-io*))
-    ;; Like in SBCL, the error message is output through *error-output*
-    ;; The rest of the interaction is performed through *debug-io*
-    (finish-output)
-    (fresh-line *error-output*)
-    (terpri *error-output*)
-    (princ *break-message* *error-output*)
-    (loop
-       ;; Here we show a list of restarts and invoke the toplevel with
-       ;; an extended set of commands which includes invoking the associated
-       ;; restarts.
-       (let* ((restart-commands (compute-restart-commands condition :display t))
-              (debug-commands 
-               ;;(adjoin restart-commands (adjoin break-commands *tpl-commands*))
-               (update-debug-commands restart-commands)
-                ))
-         (tpl :commands debug-commands)))))
+  (with-standard-io-syntax
+    (let* ((*standard-input* *debug-io*)
+           (*standard-output* *debug-io*)
+           ;;(*tpl-prompt-hook* "[dbg] ")
+           (*print-pretty* nil)
+           (*print-circle* t)
+           (*readtable* (or *break-readtable* *readtable*))
+           (*break-message* (format nil "~&~A~%" condition))
+           (*break-level* (1+ *break-level*))
+           (break-level *break-level*)
+           (*break-env* nil))
+      (check-default-debugger-runaway)
+      #+threads
+      ;; We give our process priority for grabbing the console.
+      (setq *console-owner* mp:*current-process*)
+      ;; As of ECL 9.4.1 making a normal function return from the debugger
+      ;; seems to be a very bad idea! Basically, it dumps core...
+      (when (listen *debug-io*)
+	(clear-input *debug-io*))
+      ;; Like in SBCL, the error message is output through *error-output*
+      ;; The rest of the interaction is performed through *debug-io*
+      (finish-output)
+      (fresh-line *error-output*)
+      (terpri *error-output*)
+      (princ *break-message* *error-output*)
+      (loop
+	 ;; Here we show a list of restarts and invoke the toplevel with
+	 ;; an extended set of commands which includes invoking the associated
+	 ;; restarts.
+	 (let* ((restart-commands (compute-restart-commands condition :display t))
+		(debug-commands 
+		 ;;(adjoin restart-commands (adjoin break-commands *tpl-commands*))
+		 (update-debug-commands restart-commands)
+		  ))
+	   (tpl :commands debug-commands))))))
 
 (defun invoke-debugger (condition)
   ;; call *INVOKE-DEBUGGER-HOOK* first, so that *DEBUGGER-HOOK* is not
   ;; called when the debugger is disabled. We adopt this mechanism
   ;; from SBCL.
+  #-ecl-min
   (declare (c::policy-debug-ihs-frame))
   (let ((old-hook *invoke-debugger-hook*))
     (when old-hook
@@ -1458,17 +1466,13 @@ package."
         (default-debugger condition)
         (let* (;; We do not have a si::top-level invocation above us
                ;; so we have to provide the environment for interactive use.
-               (*break-enable* *break-enable*)
                (*invoke-debugger-hook* *invoke-debugger-hook*)
                (*debugger-hook* *debugger-hook*)
-               (*quit-tags* (cons *quit-tag* *quit-tags*))
-               (*quit-tag* *quit-tags*)	; any unique new value
-               (*ihs-top* 0) ;; Or should it be 1?
-               (*tpl-level* (1+ *tpl-level*)) ;; Or should we simply say 0.
+               (*ihs-top* *ihs-top*) ;; Or should it be 1?
+               (*tpl-level* *tpl-level*) ;; Or should we simply say 0.
                (*tpl-commands* *tpl-commands*)
                + ++ +++ - * ** *** / // ///)
-          (catch *quit-tag*
-            (default-debugger condition)))))
+          (default-debugger condition))))
   (finish-output))
 
 (defun safe-eval (form env &optional (err-value nil err-value-p))

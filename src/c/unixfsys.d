@@ -15,7 +15,6 @@
     See file '../Copyright' for full details.
 */
 
-#include <ecl/ecl.h>
 #include <string.h>
 #include <stdio.h>
 #include <limits.h>
@@ -27,6 +26,7 @@
 # define F_OK 0
 #endif
 #include <sys/types.h>
+#include <ecl/ecl.h>
 #ifdef HAVE_PWD_H
 # include <pwd.h>
 #endif
@@ -41,7 +41,7 @@
 #  include <sys/dir.h>
 # endif
 #endif
-#if defined(_MSC_VER) || defined(__MINGW32__)
+#if defined(ECL_MS_WINDOWS_HOST)
 # include <windows.h>
 # undef ERROR
 #endif
@@ -86,7 +86,7 @@ safe_lstat(const char *path, struct stat *sb)
 }
 #endif
 
-#if defined(_MSC_VER) || defined(__MINGW32__)
+#if defined(ECL_MS_WINDOWS_HOST)
 static cl_object
 drive_host_prefix(cl_object pathname)
 {
@@ -169,7 +169,7 @@ current_dir(void) {
 static cl_object
 file_kind(char *filename, bool follow_links) {
 	cl_object output;
-#if defined(_MSC_VER) || defined(__MINGW32__)
+#if defined(ECL_MS_WINDOWS_HOST)
 	DWORD dw;
 	ecl_disable_interrupts();
 	dw = GetFileAttributes( filename );
@@ -208,7 +208,7 @@ si_file_kind(cl_object filename, cl_object follow_links) {
 	@(return file_kind((char*)filename->base_string.self, !Null(follow_links)))
 }
 
-#if defined(HAVE_LSTAT) && !defined(__MINGW32__) && !defined(_MSV_VER)
+#if defined(HAVE_LSTAT) && !defined(ECL_MS_WINDOWS_HOST)
 static cl_object
 si_readlink(cl_object filename) {
 	/* Given a filename which is a symlink, this routine returns
@@ -309,7 +309,7 @@ make_base_pathname(cl_object pathname)
         return ecl_make_pathname(pathname->pathname.host,
 				 pathname->pathname.device,
 				 ecl_list1(@':absolute'),
-				 Cnil, Cnil, Cnil);
+				 Cnil, Cnil, Cnil, @':local');
 }
 
 static cl_object
@@ -339,7 +339,7 @@ file_truename(cl_object pathname, cl_object filename)
 		pathname = ecl_make_pathname(pathname->pathname.host,
 					     pathname->pathname.device,
 					     pathname->pathname.directory,
-					     Cnil, Cnil, Cnil);
+					     Cnil, Cnil, Cnil, @':local');
                 pathname = ecl_merge_pathnames(filename, pathname, @':default');
                 return file_truename(pathname, Cnil);
 #endif
@@ -407,7 +407,7 @@ ecl_backup_open(const char *filename, int option, int mode)
 
 	strcat(strcpy(backupfilename, filename), ".BAK");
 	ecl_disable_interrupts();
-#if defined(_MSC_VER) || defined(__MINGW32__)
+#if defined(ECL_MS_WINDOWS_HOST)
 	/* Windows' rename doesn't replace an existing file */
 	if (access(backupfilename, F_OK) == 0 && unlink(backupfilename)) {
 		ecl_enable_interrupts();
@@ -443,58 +443,39 @@ ecl_file_len(int f)
 	 *    or if it does not exist. Notice that the filename to be renamed
 	 *    is not the truename, because we might be renaming a symbolic link.
 	 */
-	old_filename = si_coerce_to_filename(oldn);
+	old_filename = cl_string_right_trim(ecl_list1(CODE_CHAR('/')),
+                                            si_coerce_to_filename(oldn));
 	old_truename = cl_truename(oldn);
 
 	/* 2) Create the new file name. */
 	newn = ecl_merge_pathnames(newn, oldn, @':newest');
 	new_filename = si_coerce_to_filename(newn);
 
-	ecl_disable_interrupts();
-	while (if_exists == @':error' || if_exists == Cnil) {
-#if defined(_MSC_VER) || defined(__MINGW32__)
-		error = SetErrorMode(0);
-		if (MoveFile((char*)old_filename->base_string.self,
-			     (char*)new_filename->base_string.self)) {
-			SetErrorMode(error);
-			goto SUCCESS;
-		}
-		SetErrorMode(error);
-		switch (GetLastError()) {
-		case ERROR_ALREADY_EXISTS:
-		case ERROR_FILE_EXISTS:
-			break;
-		default:
-			goto FAILURE_CLOBBER;
-		};
-#else
-		if (link((char*)old_filename->base_string.self,
-			 (char*)new_filename->base_string.self) == 0) {
-			(void)unlink((char*)old_filename->base_string.self);
-			goto SUCCESS;
-		}
-		if (errno != EEXIST && errno != ENOTEMPTY) {
-			goto FAILURE_CLOBBER;
-		}
-#endif
+	while (if_exists == @':error' || if_exists == Cnil)
+        {
+                if (cl_probe_file(new_filename) == Cnil) {
+                        if_exists = Ct;
+                        break;
+                }
 		/* if the file already exists */
-		if (if_exists != Cnil) {
-			ecl_enable_interrupts();
+		if (if_exists == @':error') {
 			if_exists = CEerror(@':supersede',
-					"When trying to rename ~S, ~S already exists", 2,
-					oldn, new_filename);
-			ecl_disable_interrupts();
+					"When trying to rename ~S, ~S already exists",
+                                        2, oldn, new_filename);
 			if (if_exists == Ct) if_exists= @':error';
 		}
-
 		if (if_exists == Cnil) {
-			ecl_enable_interrupts();
 			@(return Cnil Cnil Cnil)
 		}
 	}
-	
-	if (if_exists == @':supersede' || if_exists == Ct) {
-#if defined(_MSC_VER) || defined(__MINGW32__)
+	if (ecl_unlikely(if_exists != @':supersede' && if_exists != Ct)) {
+		/* invalid key */
+		FEerror("~S is an illegal IF-EXISTS option for RENAME-FILE.",
+                        1, if_exists);
+	}
+        {
+                ecl_disable_interrupts();
+#if defined(ECL_MS_WINDOWS_HOST)
 		error = SetErrorMode(0);
 		if (MoveFile((char*)old_filename->base_string.self,
 			     (char*)new_filename->base_string.self)) {
@@ -540,10 +521,6 @@ ecl_file_len(int f)
 			goto SUCCESS;
 		}
 #endif
-	} else {
-		/* invalid key */
-		ecl_enable_interrupts();
-		FEerror("~S is an illegal IF-EXISTS option for RENAME-FILE.", 1, if_exists);
 	}
 FAILURE_CLOBBER:
 	ecl_enable_interrupts();
@@ -641,7 +618,7 @@ ecl_homedir_pathname(cl_object user)
 		FEerror("Unknown user ~S.", 1, p);
 	} else if ((h = getenv("HOME"))) {
 		namestring = make_base_string_copy(h);
-#if defined(_MSC_VER) || defined(ming32)
+#if defined(ECL_MS_WINDOWS_HOST)
 	} else if ((h = getenv("HOMEPATH")) && (d = getenv("HOMEDRIVE"))) {
 		namestring =
 			si_base_string_concatenate(2,
@@ -703,7 +680,7 @@ list_directory(cl_object base_dir, const char *text_mask, cl_object pathname_mas
 	while ((entry = readdir(dir))) {
 		text = entry->d_name;
 #else
-# ifdef _MSC_VER
+# ifdef ECL_MS_WINDOWS_HOST
 	WIN32_FIND_DATA fd;
 	HANDLE hFind = NULL;
 	BOOL found = FALSE;
@@ -743,7 +720,7 @@ list_directory(cl_object base_dir, const char *text_mask, cl_object pathname_mas
 		if (dir.d_ino == 0)
 			continue;
 		text = dir.d_name;
-# endif /* !_MSC_VER */
+# endif /* !ECL_MS_WINDOWS_HOST */
 #endif /* !HAVE_DIRENT_H */
 		if (text[0] == '.' &&
 		    (text[1] == '\0' ||
@@ -765,11 +742,11 @@ list_directory(cl_object base_dir, const char *text_mask, cl_object pathname_mas
 #ifdef HAVE_DIRENT_H
 	closedir(dir);
 #else
-# ifdef _MSC_VER
+# ifdef ECL_MS_WINDOWS_HOST
         FindClose(hFind);
 # else
 	fclose(fp);
-# endif /* !_MSC_VER */
+# endif /* !ECL_MS_WINDOWS_HOST */
 #endif /* !HAVE_DIRENT_H */
 	ecl_enable_interrupts();
 OUTPUT:
@@ -796,7 +773,8 @@ dir_files(cl_object base_dir, cl_object pathname)
 		return cl_list(1, base_dir);
 	}
 	mask = ecl_make_pathname(Cnil, Cnil, Cnil,
-                                 name, type, pathname->pathname.version);
+                                 name, type, pathname->pathname.version,
+                                 @':local');
 	for (all_files = list_directory(base_dir, NULL, mask);
 	     !Null(all_files);
 	     all_files = ECL_CONS_CDR(all_files))
@@ -924,7 +902,7 @@ si_get_library_pathname(void)
                         goto OUTPUT;
                 }
         }
-#if defined(_MSC_VER) || defined(__MINGW32__)
+#if defined(ECL_MS_WINDOWS_HOST)
 	{
         char *buffer;
 	HMODULE hnd;
@@ -1003,7 +981,7 @@ si_mkdir(cl_object directory, cl_object mode)
 	    filename->base_string.self[--filename->base_string.fillp] = 0;
 
 	ecl_disable_interrupts();
-#if defined(__MINGW32__)
+#if defined(ECL_MS_WINDOWS_HOST)
 	ok = mkdir((char*)filename->base_string.self);
 #else
 	ok = mkdir((char*)filename->base_string.self, modeint);
@@ -1022,7 +1000,7 @@ si_mkstemp(cl_object template)
 	cl_index l;
 	int fd;
 
-#if defined(__MINGW32__) || defined(_MSC_VER)
+#if defined(ECL_MS_WINDOWS_HOST)
 	cl_object phys, dir, file;
 	char strTempDir[MAX_PATH];
 	char strTempFileName[MAX_PATH];
@@ -1107,9 +1085,9 @@ si_copy_file(cl_object orig, cl_object dest)
 	orig = si_coerce_to_filename(orig);
 	dest = si_coerce_to_filename(dest);
 	ecl_disable_interrupts();
-	in = fopen((char*)orig->base_string.self, "r");
+	in = fopen((char*)orig->base_string.self, OPEN_R);
 	if (in) {
-		out = fopen((char*)dest->base_string.self, "w");
+		out = fopen((char*)dest->base_string.self, OPEN_W);
 		if (out) {
 			unsigned char *buffer = ecl_alloc_atomic(1024);
 			cl_index size;

@@ -13,6 +13,10 @@
     See file '../Copyright' for full details.
 */
 
+#if defined(_MSC_VER) || defined(__MINGW32__) || __WIN32__ || __WING64__
+#define ECL_MS_WINDOWS_HOST
+#endif
+
 /*
  * If ECL_API has been predefined, that means we are building the core
  * library and, under windows, we must tell the compiler to export
@@ -21,7 +25,7 @@
  * uses ECL and, under windows, we must tell the compiler that certain
  * will be imported from a DLL.
  */
-#if defined(__MINGW32__) || defined(_MSC_VER) || defined(cygwin)
+#if defined(ECL_MS_WINDOWS_HOST) || defined(cygwin)
 # define ECL_DLLEXPORT __declspec(dllexport)
 # ifdef ECL_API
 #  undef \
@@ -50,19 +54,17 @@
 
 /* Use GNU Multiple Precision library for bignums                       */
 #ifndef DPP
-#undef WITH_GMP
-#ifdef WITH_GMP
 #include "@ECL_GMP_HEADER@"
-#endif
 #endif
 
 /* Userland threads?							*/
 #undef ECL_THREADS
 #ifdef ECL_THREADS
-# if defined(_MSC_VER) || defined(__MINGW32__)
+# if defined(ECL_MS_WINDOWS_HOST)
 #  define ECL_WINDOWS_THREADS
 # endif
 /* # udef ECL_SEMAPHORES */
+#undef ECL_RWLOCK
 #endif
 
 /* __thread thread-local variables?                                     */
@@ -80,7 +82,7 @@
 # include "@ECL_BOEHM_GC_HEADER@"
 /* GC >= 7.2 defines these macros to intercept thread functions, but
  * in doing so it breaks mingw. */
-# if defined(__MINGW32__) && defined(_beginthreadex)
+# if defined(ECL_MS_WINDOWS_HOST) && defined(_beginthreadex)
 #  undef _beginthread
 #  undef _endthread
 #  undef _beginthreadex
@@ -90,7 +92,7 @@
 
 /* Network streams							*/
 #undef TCP
-#if defined(TCP) && (defined(_MSC_VER) || defined(__MINGW32__))
+#if defined(TCP) && defined(ECL_MS_WINDOWS_HOST)
 # define ECL_WSOCK
 #endif
 
@@ -120,7 +122,7 @@
 
 /* Use mprotect for fast interrupt dispatch				*/
 #undef ECL_USE_MPROTECT
-#if defined(_MSC_VER) || defined(__MINGW32__)
+#if defined(ECL_MS_WINDOWS_HOST)
 # define ECL_USE_GUARD_PAGE
 #endif
 
@@ -153,6 +155,8 @@
 #define FIXNUM_BITS		@CL_FIXNUM_BITS@
 #define MOST_POSITIVE_FIXNUM	((cl_fixnum)@CL_FIXNUM_MAX@)
 #define MOST_NEGATIVE_FIXNUM	((cl_fixnum)@CL_FIXNUM_MIN@)
+#define MOST_POSITIVE_FIXNUM_VAL @CL_FIXNUM_MAX@
+#define MOST_NEGATIVE_FIXNUM_VAL @CL_FIXNUM_MIN@
 
 typedef @CL_FIXNUM_TYPE@ cl_fixnum;
 typedef unsigned @CL_FIXNUM_TYPE@ cl_index;
@@ -210,13 +214,7 @@ typedef unsigned @CL_FIXNUM_TYPE@ cl_hashkey;
 #define ECL_SLOTS_LIMIT	32768
 
 /* compiler understands long double                                     */
-#undef HAVE_LONG_DOUBLE
-#ifdef HAVE_LONG_DOUBLE
-# define ECL_LONG_FLOAT
-# define ECL_LARGE_FLOAT long double
-#else
-# define ECL_LARGE_FLOAT double
-#endif
+#undef ECL_LONG_FLOAT
 /* compiler understands complex                                         */
 #undef HAVE_DOUBLE_COMPLEX
 #undef HAVE_FLOAT_COMPLEX
@@ -253,6 +251,9 @@ typedef unsigned @CL_FIXNUM_TYPE@ cl_hashkey;
 # endif
 #endif
 
+#if defined(__SSE2__) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+#undef ECL_SSE2
+#endif
 
 /* -CUT-: Everything below this mark will not be installed		*/
 /* -------------------------------------------------------------------- *
@@ -350,7 +351,7 @@ typedef unsigned @CL_FIXNUM_TYPE@ cl_hashkey;
 /* can activate individual traps in floating point environment		*/
 /* this flag has to be deactivated for the Itanium architecture, where  */
 /* the GNU libc functions are broken                                    */
-#ifndef __ia64__
+#if !defined(__ia64__) && !defined(PPC)
 #undef HAVE_FEENABLEEXCEPT
 #endif
 /* do we want to deactivate all support for floating point exceptions   */
@@ -392,6 +393,8 @@ typedef unsigned @CL_FIXNUM_TYPE@ cl_hashkey;
 #undef HAVE_SEMAPHORE_H
 /* whether we have a working sem_init()                                 */
 #undef HAVE_SEM_INIT
+/* whether we have read/write locks                                     */
+#undef HAVE_POSIX_RWLOCK
 /* uname() for system identification					*/
 #undef HAVE_UNAME
 #undef HAVE_UNISTD_H
@@ -400,6 +403,11 @@ typedef unsigned @CL_FIXNUM_TYPE@ cl_hashkey;
 #undef ECL_LONG_LONG_BITS
 /* existence of char **environ         					*/
 #undef HAVE_ENVIRON
+/* existence of pointer -> function name functions                      */
+#undef HAVE_DLADDR
+#undef HAVE_BACKTRACE
+#undef HAVE_BACKTRACE_SYMBOLS
+#undef HAVE___BUILTIN_RETURN_ADDRESS
 
 /*
  * we do not manage to get proper signal handling of floating point
@@ -452,7 +460,7 @@ typedef unsigned @CL_FIXNUM_TYPE@ cl_hashkey;
 #  define FILE_CNT(fp)	((fp)->_cnt)
 #endif
 
-#if defined(cygwin) || defined(__MINGW32__) || defined(_MSC_VER)
+#if defined(cygwin) || defined(ECL_MS_WINDOWS_HOST)
 #  define IS_DIR_SEPARATOR(x) ((x=='/')||(x=='\\'))
 #  define DIR_SEPARATOR		'/'
 #  define PATH_SEPARATOR	';'
@@ -477,10 +485,16 @@ typedef unsigned @CL_FIXNUM_TYPE@ cl_hashkey;
 #  define signbit(x) (copysign(1.0,(x)))
 # endif
 # ifndef isfinite
-#  ifdef __sun
-#   include <ieeefp.h>
+#  ifdef __sun__
+#   ifndef ECL_LONG_FLOAT
+#    include <ieeefp.h>
+#    define isfinite(x) finite(x)
+#   else
+#    error "Function isfinite() is missing"
+#   endif
+#  else
+#   define isfinite(x) finite(x)
 #  endif
-#  define isfinite(x) finite(x)
 # endif
 # ifndef signbit
 #  ifndef ECL_SIGNED_ZERO
@@ -496,12 +510,17 @@ typedef unsigned @CL_FIXNUM_TYPE@ cl_hashkey;
 #   endif
 #  endif
 # endif
-# if defined(HAVE_FENV_H) && !defined(HAVE_FEENABLEEXCEPT) && !defined(ECL_AVOID_FPE_H)
-#  include <fenv.h>
-#  define ECL_MATHERR_CLEAR feclearexcept(FE_ALL_EXCEPT)
-#  define ECL_MATHERR_TEST if (fetestexcept(FE_ALL_EXCEPT)) ecl_deliver_fpe();
-# else
-#  define ECL_MATHERR_CLEAR
-#  define ECL_MATHERR_TEST
+/*
+ * GCC fails to compile the following code
+ * if (f == 0.0) { if (signbit(f)) ... }
+ */
+# if defined(__sun__) && defined(__GNUC__)
+#  undef \
+   signbit /* Avoid autoconf removing this */
+#  define signbit(x) (copysign(1.0,(x)) < 0)
 # endif
+#endif
+
+#if defined(HAVE_LIBFFI) && defined(ECL_INCLUDE_FFI_H)
+#include "@ECL_LIBFFI_HEADER@"
 #endif

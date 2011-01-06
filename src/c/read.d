@@ -252,17 +252,11 @@ LOOP:
 				   all referenced packages have been properly built.
 				*/
 				cl_object name = cl_copy_seq(token);
-				unlikely_if (cl_core.packages_to_be_created == OBJNULL) {
+				unlikely_if (Null(the_env->packages_to_be_created_p)) {
 					FEerror("There is no package with the name ~A.",
 						1, name);
-				} else if (!Null(p = ecl_assoc(name, cl_core.packages_to_be_created))) {
-					p = CDR(p);
-				} else {
-					p = ecl_make_package(name,Cnil,Cnil);
-					cl_core.packages = CDR(cl_core.packages);
-					cl_core.packages_to_be_created =
-						cl_acons(name, p, cl_core.packages_to_be_created);
 				}
+                                p = _ecl_package_to_be_created(the_env, name);
 			}
 			TOKEN_STRING_FILLP(token) = length = 0;
 			upcase = count = colon = 0;
@@ -428,200 +422,6 @@ si_read_object_or_ignore(cl_object in, cl_object eof)
         }
 	ecl_bds_unwind_n(env, 2);
 	return x;
-}
-
-#define	ecl_exponent_marker_p(i)	\
-	((i) == 'e' || (i) == 'E' ||	\
-	 (i) == 's' || (i) == 'S' || (i) == 'f' || (i) == 'F' || \
-	 (i) == 'd' || (i) == 'D' || (i) == 'l' || (i) == 'L' || \
-	 (i) == 'b' || (i) == 'B')
-
-#define basep(d)	(d <= 36)
-
-/*
-	ecl_parse_number(str, start, end, ep, radix) parses C string str
-	up to (but not including) str[end]
-	using radix as the radix for the rational number.
-	(For floating numbers, the radix is ignored and replaced with 10)
-	When parsing succeeds,
-	the index of the next character is assigned to *ep,
-	and the number is returned as a lisp data object.
-	If not, OBJNULL is returned.
-*/
-cl_object
-ecl_parse_number(cl_object str, cl_index start, cl_index end,
-		 cl_index *ep, unsigned int radix)
-{
-	cl_index i, exp_marker_loc = 0;
-	bool is_float = 0;
-	if (end <= start) {
-		*ep = start;
-		return OBJNULL;
-	}
-	for (i = start; i < end; i++) {
-		cl_index c = ecl_char(str, i);
-		if (c == '/') {
-			/* A slash separates two integer numbers forming a ratio */
-			cl_object num, den;
-			num = ecl_parse_integer(str, start, i, ep, radix);
-			if (num == OBJNULL || (*ep < i)) {
-				return OBJNULL;
-			}
-			den = ecl_parse_integer(str, i+1, end, ep, radix);
-			if (den == OBJNULL || (*ep < end)) {
-				return OBJNULL;
-			}
-			if (den == MAKE_FIXNUM(0)) {
-				return Cnil;
-			}
-			return ecl_make_ratio(num, den);
-		} else if (c == '.') {
-			/* A trailing dot denotes base-10 integer number */
-			radix = 10;
-			if (i == (end-1)) {
-				cl_object aux =
-				  ecl_parse_integer(str, 0, i, ep, radix);
-				if (*ep == i) {
-					*ep = end;
-				}
-				return aux;
-			}
-			is_float = 1;
-		} else if (ecl_digitp(c, radix) < 0) {
-			if (ecl_exponent_marker_p(c)) {
-				exp_marker_loc = i - start;
-				is_float = 1;
-				break;
-			}
-			if ((c < '0' || c > '9') && c != '+' && c != '-') {
-				/* A non valid character found */
-				return OBJNULL;
-			}
-		}
-	}
-	if (!is_float) {
-		return ecl_parse_integer(str, start, end, ep, radix);
-	} else if (radix != 10) {
-		/* Can only parse floating point numbers in decimal format */
-		*ep = 1;
-		return OBJNULL;
-	} else {
-		/* We use strtod() for parsing floating point numbers
-		 * accurately. However, this routine only accepts character
-		 * 'e' or 'E' as exponent markers and we have to make a copy
-		 * of the number with this exponent marker. */
-		cl_index length = end - start;
-		char *buffer = (char*)ecl_alloc_atomic(length+1);
-		char *parse_end;
-		char exp_marker;
-		cl_object output;
-#ifdef ECL_LONG_FLOAT
-		extern long double strtold(const char *nptr, char **endptr);
-		long double d;
-#else
-		double d;
-#endif
-#ifdef ECL_UNICODE
-		if (ECL_EXTENDED_STRING_P(str)) {
-			for (i = start; i < end; i++) {
-				cl_index c = ecl_char(str, i);
-				if (c > 255) {
-					*ep = i;
-					return OBJNULL;
-				}
-				buffer[i] = c;
-			}
-		} else
-#endif
-		{
-			memcpy(buffer, str->base_string.self + start, length);
-		}
-		buffer[length] = '\0';
-		if (exp_marker_loc) {
-			exp_marker = buffer[exp_marker_loc];
-			buffer[exp_marker_loc] = 'e';
-		} else {
-			exp_marker = ecl_current_read_default_float_format();
-		}
-#ifdef ECL_LONG_FLOAT
-		d = strtold(buffer, &parse_end);
-#else
-		d = strtod(buffer, &parse_end);
-#endif
-		*ep = (parse_end - buffer) + start;
-		if (*ep == start) {
-			output = OBJNULL;
-			goto OUTPUT;
-		}
-		/* make_{single|double}float signals an error when an overflow
-		   occurred while reading the number. Thus, no safety check
-		   is required here. */
-	MAKE_FLOAT:
-		switch (exp_marker) {
-		case 'e':  case 'E':
-			exp_marker = ecl_current_read_default_float_format();
-			goto MAKE_FLOAT;
-		case 's':  case 'S':
-#ifdef ECL_SHORT_FLOAT
-			output = make_shortfloat(d);
-#endif
-		case 'f':  case 'F':
-			output = ecl_make_singlefloat(d);
-			break;
-		case 'l':  case 'L':
-#ifdef ECL_LONG_FLOAT
-			output = ecl_make_longfloat(d);
-			break;
-#endif
-		case 'd':  case 'D':
-			output = ecl_make_doublefloat(d);
-			break;
-		default:
-			output = OBJNULL;
-		}
-	OUTPUT:
-		ecl_dealloc(buffer);
-		return output;
-	}
-}
-
-cl_object
-ecl_parse_integer(cl_object str, cl_index start, cl_index end,
-		  cl_index *ep, unsigned int radix)
-{
-	int sign, d;
-	cl_object integer_part, output;
-	cl_index i, c;
-
-	if (start >= end || !basep(radix)) {
-		*ep = i;
-		return OBJNULL;
-	}
-	sign = 1;
-	c = ecl_char(str, start);
-	if (c == '+') {
-		start++;
-	} else if (c == '-') {
-		sign = -1;
-		start++;
-	}
-	integer_part = _ecl_big_register0();
-        _ecl_big_set_ui(integer_part, 0);
-	for (i = start; i < end; i++) {
-		c = ecl_char(str, i);
-		d = ecl_digitp(c, radix);
-		if (d < 0) {
-			break;
-		}
-		_ecl_big_mul_ui(integer_part, integer_part, radix);
-		_ecl_big_add_ui(integer_part, integer_part, d);
-	}
-	if (sign < 0) {
-		_ecl_big_complement(integer_part, integer_part);
-	}
-	output = _ecl_big_register_normalize(integer_part);
-	*ep = i;
-	return (i == start)? OBJNULL : output;
 }
 
 static cl_object
@@ -1160,6 +960,9 @@ sharp_dot_reader(cl_object in, cl_object c, cl_object d)
 		@(return Cnil);
 	unlikely_if (ecl_symbol_value(@'*read-eval*') == Cnil)
 		FEreader_error("Cannot evaluate the form #.~A", in, 1, c);
+        /* FIXME! We should do something here to ensure that the #.
+         * only uses the #n# that have been defined */
+        c = patch_sharp(c);
 	c = si_eval_with_env(1, c);
 	@(return c)
 }
@@ -1353,8 +1156,8 @@ patch_sharp(cl_object x)
 	cl_object pairs;
         cl_object table = 
                 cl__make_hash_table(@'eq', MAKE_FIXNUM(20), /* size */
-                                    ecl_make_singlefloat(1.5f), /* rehash-size */
-                                    ecl_make_singlefloat(0.5f), /* rehash-threshold */
+                                    cl_core.rehash_size,
+                                    cl_core.rehash_threshold,
                                     Cnil); /* thread-safe */
 
         pairs = ECL_SYM_VAL(the_env, @'si::*sharp-eq-context*');
@@ -1519,12 +1322,12 @@ ecl_current_read_base(void)
 {
 	const cl_env_ptr the_env = ecl_process_env();
 	/* INV: *READ-BASE* always has a value */
-	cl_object x = ECL_SYM_VAL(the_env, @'*read_base*');
+	cl_object x = ECL_SYM_VAL(the_env, @'*read-base*');
         cl_fixnum b;
 
         unlikely_if (!ECL_FIXNUMP(x) || ((b = fix(x)) < 2) || (b > 36))
         {
-                ECL_SETQ(the_env, @'*read_base*', MAKE_FIXNUM(10));
+                ECL_SETQ(the_env, @'*read-base*', MAKE_FIXNUM(10));
                 FEerror("The value of *READ-BASE*~&  ~S~%"
                         "is not in the range (INTEGER 2 36)", 1, x);
         }
@@ -1820,62 +1623,6 @@ EOFCHK:	if (c == EOF && TOKEN_STRING_FILLP(token) == 0) {
 	@(return Cnil)
 @)
 
-@(defun parse_integer (strng
-		       &key (start MAKE_FIXNUM(0))
-			    end
-			    (radix MAKE_FIXNUM(10))
-			    junk_allowed
-		       &aux x)
-	cl_index s, e, ep;
-	cl_object rtbl = ecl_current_readtable();
-@ {
-        unlikely_if (!ECL_STRINGP(strng)) {
-                FEwrong_type_nth_arg(@[parse-integer], 1, strng, @[string]);
-        }
-	unlikely_if (!FIXNUMP(radix) ||
-                     ecl_fixnum_lower(radix, MAKE_FIXNUM(2)) ||
-                     ecl_fixnum_greater(radix, MAKE_FIXNUM(36)))
-        {
-		FEerror("~S is an illegal radix.", 1, radix);
-        }
-        {
-                cl_index_pair p =
-                        ecl_vector_start_end(@[parse-integer], strng, start, end);
-                s = p.start;
-                e = p.end;
-        }
-	while (s < e &&
-	       ecl_readtable_get(rtbl, ecl_char(strng, s), NULL) == cat_whitespace) {
-		s++;
-	}
-	if (s >= e) {
-		if (junk_allowed != Cnil)
-			@(return Cnil MAKE_FIXNUM(s))
-		else
-			goto CANNOT_PARSE;
-	}
-	x = ecl_parse_integer(strng, s, e, &ep, fix(radix));
-	if (x == OBJNULL) {
-		if (junk_allowed != Cnil) {
-			@(return Cnil MAKE_FIXNUM(ep));
-		} else {
-			goto CANNOT_PARSE;
-		}
-	}
-	if (junk_allowed != Cnil) {
-		@(return x MAKE_FIXNUM(ep));
-	}
-	for (s = ep; s < e; s++) {
-		unlikely_if (ecl_readtable_get(rtbl, ecl_char(strng, s), NULL)
-                             != cat_whitespace) 
-                {
-CANNOT_PARSE:		FEparse_error("Cannot parse an integer in the string ~S.",
-				      Cnil, 1, strng);
-		}
-	}
-	@(return x MAKE_FIXNUM(e));
-} @)
-
 @(defun read_byte (binary_input_stream &optional (eof_errorp Ct) eof_value)
 	cl_object c;
 @
@@ -2004,8 +1751,8 @@ ecl_readtable_set(cl_object readtable, int c, enum ecl_chattrib cat,
 		cl_object hash = readtable->readtable.hash;
 		if (Null(hash)) {
 			hash = cl__make_hash_table(@'eql', MAKE_FIXNUM(128),
-						   ecl_make_singlefloat(1.5f),
-						   ecl_make_singlefloat(0.5f),
+                                                   cl_core.rehash_size,
+                                                   cl_core.rehash_threshold,
 						   Ct);
 			readtable->readtable.hash = hash;
 		}
@@ -2083,8 +1830,8 @@ ecl_invalid_character_p(int c)
 	c = ecl_char_code(chr);
 	cat = Null(non_terminating_p)? cat_terminating : cat_non_terminating;
 	table = cl__make_hash_table(@'eql', MAKE_FIXNUM(128),
-				    ecl_make_singlefloat(1.5f),
-				    ecl_make_singlefloat(0.5f),
+                                    cl_core.rehash_size,
+                                    cl_core.rehash_threshold,
 				    Ct);
 	ecl_readtable_set(readtable, c, cat, table);
 	@(return Ct)
@@ -2286,7 +2033,7 @@ init_read(void)
 
         {
                 cl_object var, val;
-                var = cl_list(23,
+                var = cl_list(24,
                               @'*print-pprint-dispatch*', /* See end of pprint.lsp */
                               @'*print-array*',
                               @'*print-base*',
@@ -2309,8 +2056,9 @@ init_read(void)
                               @'*readtable*',
                               @'si::*print-package*',
                               @'si::*print-structure*',
-                              @'si::*sharp-eq-context*');
-                val = cl_list(23,
+                              @'si::*sharp-eq-context*',
+			      @'si::*circle-counter*');
+                val = cl_list(24,
                               /**pprint-dispatch-table**/ Cnil,
                               /**print-array**/ Ct,
                               /**print-base**/ MAKE_FIXNUM(10),
@@ -2333,9 +2081,10 @@ init_read(void)
                               /**readtable**/ cl_core.standard_readtable,
                               /*si::*print-package**/ cl_core.lisp_package,
                               /*si::*print-structure**/ Ct,
-                              /*si::*sharp-eq-context**/ Cnil);
+                              /*si::*sharp-eq-context**/ Cnil,
+			      /*si::*cicle-counter**/ Cnil);
                 ECL_SET(@'si::+ecl-syntax-progv-list+', CONS(var,val));
-                var = cl_list(21,
+                var = cl_list(23,
                               @'*print-pprint-dispatch*', /* See end of pprint.lsp */
                               @'*print-array*',
                               @'*print-base*',
@@ -2356,8 +2105,10 @@ init_read(void)
                               @'*read-eval*',
                               @'*read-suppress*',
                               @'*readtable*',
-                              @'*package*');
-                val = cl_list(21,
+                              @'*package*',
+                              @'si::*sharp-eq-context*',
+			      @'si::*circle-counter*');
+                val = cl_list(23,
                               /**pprint-dispatch-table**/ Cnil,
                               /**print-array**/ Ct,
                               /**print-base**/ MAKE_FIXNUM(10),
@@ -2378,7 +2129,9 @@ init_read(void)
                               /**read-eval**/ Ct,
                               /**read-suppress**/ Cnil,
                               /**readtable**/ cl_core.standard_readtable,
-                              /**package**/ cl_core.user_package);
+                              /**package**/ cl_core.user_package,
+                              /*si::*sharp-eq-context**/ Cnil,
+			      /*si::*cicle-counter**/ Cnil);
                 ECL_SET(@'si::+io-syntax-progv-list+', CONS(var,val));
         }
 }
@@ -2398,7 +2151,7 @@ cl_object
 read_VV(cl_object block, void (*entry_point)(cl_object))
 {
 	const cl_env_ptr env = ecl_process_env();
-	volatile cl_object old_eptbc = cl_core.packages_to_be_created;
+	volatile cl_object old_eptbc = env->packages_to_be_created;
 	volatile cl_object x;
 	cl_index i, len, perm_len, temp_len;
 	cl_object in;
@@ -2421,6 +2174,7 @@ read_VV(cl_object block, void (*entry_point)(cl_object))
 		block->cblock.cfuns_size = 0;
 		block->cblock.cfuns = NULL;
                 block->cblock.source = Cnil;
+                block->cblock.refs = MAKE_FIXNUM(0);
 		si_set_finalizer(block, Ct);
 	}
 	block->cblock.entry = entry_point;
@@ -2431,8 +2185,7 @@ read_VV(cl_object block, void (*entry_point)(cl_object))
                 cl_object progv_list;
 
 		ecl_bds_bind(env, @'si::*cblock*', block);
-		if (cl_core.packages_to_be_created == OBJNULL)
-			cl_core.packages_to_be_created = Cnil;
+                env->packages_to_be_created_p = Ct;
 
 		/* Communicate the library which Cblock we are using, and get
 		 * back the amount of data to be processed.
@@ -2471,8 +2224,18 @@ read_VV(cl_object block, void (*entry_point)(cl_object))
 		memset(VVtemp, 0, temp_len * sizeof(*VVtemp));
 
 		/* Read all data for the library */
-		in=ecl_make_string_input_stream(make_constant_base_string(block->cblock.data_text),
-						0, block->cblock.data_text_size);
+#ifdef ECL_EXTERNALIZABLE
+                {
+                        cl_object v = ecl_deserialize(block->cblock.data_text);
+                        unlikely_if (v->vector.dim < len)
+                                FEreader_error("Not enough data while loading"
+                                               "binary file", in, 0);
+                        memcpy(VV, v->vector.self.t, len * sizeof(cl_object));
+                }
+#else
+		in=ecl_make_string_input_stream
+                        (make_constant_base_string(block->cblock.data_text),
+                         0, block->cblock.data_text_size);
                 progv_list = ECL_SYM_VAL(env, @'si::+ecl-syntax-progv-list+');
                 bds_ndx = ecl_progv(env, ECL_CONS_CAR(progv_list),
                                     ECL_CONS_CDR(progv_list));
@@ -2498,7 +2261,10 @@ read_VV(cl_object block, void (*entry_point)(cl_object))
 		unlikely_if (i < len)
 			FEreader_error("Not enough data while loading"
                                        "binary file", in, 0);
+#endif
 	NO_DATA_LABEL:
+                env->packages_to_be_created_p = Cnil;
+
 		for (i = 0; i < block->cblock.cfuns_size; i++) {
 			const struct ecl_cfun *prototype = block->cblock.cfuns+i;
 			cl_index fname_location = fix(prototype->block);
@@ -2508,8 +2274,10 @@ read_VV(cl_object block, void (*entry_point)(cl_object))
                         cl_object position = prototype->file_position;
 			int narg = prototype->narg;
 			VV[location] = narg<0?
-				ecl_make_cfun_va(prototype->entry, fname, block) :
-				ecl_make_cfun(prototype->entry, fname, block, narg);
+				ecl_make_cfun_va((cl_objectfn)prototype->entry,
+                                                 fname, block) :
+				ecl_make_cfun((cl_objectfn_fixed)prototype->entry,
+                                              fname, block, narg);
                         /* Add source file info */
                         if (position != MAKE_FIXNUM(-1)) {
                                 ecl_set_function_source_file_info(VV[location],
@@ -2519,15 +2287,17 @@ read_VV(cl_object block, void (*entry_point)(cl_object))
 		}
 		/* Execute top-level code */
 		(*entry_point)(MAKE_FIXNUM(0));
-		x = cl_core.packages_to_be_created;
-		loop_for_on(x) {
-			if ((old_eptbc == OBJNULL) || !ecl_member(x, old_eptbc)) {
-				CEerror(Ct, "The package named ~A was referenced in "
-				"compiled file~&  ~A~&but has not been created",
-				2, CAR(x), block->cblock.name);
-			}
-		} end_loop_for_on(x);
-                old_eptbc = cl_core.packages_to_be_created;
+		x = cl_set_difference(2, env->packages_to_be_created, old_eptbc);
+                old_eptbc = env->packages_to_be_created;
+                unlikely_if (!Null(x)) {
+                        CEerror(Ct,
+                                Null(ECL_CONS_CDR(x))?
+                                "Package ~A referenced in "
+				"compiled file~&  ~A~&but has not been created":
+                                "The packages~&  ~A~&were referenced in "
+				"compiled file~&  ~A~&but have not been created",
+				2, x, block->cblock.name);
+		}
 		if (VVtemp) {
 			block->cblock.temp_data = NULL;
 			block->cblock.temp_data_size = 0;
@@ -2537,7 +2307,8 @@ read_VV(cl_object block, void (*entry_point)(cl_object))
 	} CL_UNWIND_PROTECT_EXIT {
 		if (in != OBJNULL)
 			cl_close(1,in);
-		cl_core.packages_to_be_created = old_eptbc;
+		env->packages_to_be_created = old_eptbc;
+                env->packages_to_be_created_p = Cnil;
 	} CL_UNWIND_PROTECT_END;
 
 	return block;

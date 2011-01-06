@@ -42,7 +42,7 @@
 		  :args (list 'LONG-FLOAT-VALUE val (add-object val))))
    (always
     (make-c1form* 'LOCATION :type (object-type val)
-		  :args (list 'VV (add-object val))))
+		  :args (add-object val)))
    (only-small-values nil)
    (t nil)))
 
@@ -68,12 +68,13 @@
                                   (single-float 'single-float-value)
                                   (double-float 'double-float-value)
                                   (long-float 'long-float-value)))
-                      (location `(VV ,c-value)))
+                      (location (make-vv :location c-value :value value)))
                 (cons value (make-c1form* 'LOCATION :type type
                                           :args (list loc-type value location)))))
               (t
                (cons name (make-c1form* 'LOCATION :type (type-of name)
-                                         :args `(VV ,c-value)))))
+                                         :args (make-vv :location c-value
+                                                        :value name)))))
         +optimizable-constants+)))
  (reverse
  `((MOST-POSITIVE-SHORT-FLOAT "FLT_MAX")
@@ -123,7 +124,7 @@
     (LEAST-POSITIVE-NORMALIZED-LONG-FLOAT" LDBL_MIN")
     (LEAST-NEGATIVE-LONG-FLOAT "-LDBL_MIN")
     (LEAST-NEGATIVE-NORMALIZED-LONG-FLOAT "-LDBL_MIN")
-    (#.(coerce -0.0 'long-float) "cl_core.longfloat_minus_zero")
     (#.(coerce 0 'long-float) "cl_core.longfloat_zero")
+    (#.(coerce -0.0 'long-float) "cl_core.longfloat_minus_zero")
     )
    )))

@@ -38,8 +38,8 @@
               (t
                (error 'simple-program-error
                       :format-error "Wrong number of arguments for operator ~a in ~a"
-                      :format-arguments (list operators (or whole
-                                                            (list* operator args)))))))))
+                      :format-arguments (list operator (or whole
+                                                           (list* operator args)))))))))
 
 (define-compiler-macro * (&whole all &rest args)
   (simplify-arithmetic '* args all))
@@ -58,7 +58,7 @@
 ;;; that some of they have become binary operators.
 ;;;
 
-(defun maximum-number-type (t1 t2 &optional only-real)
+(defun maximum-number-type (t1 t2 &key only-real integer-result)
   ;; Computes the output type of an operation between number types T1
   ;; and T2 using the rules of floating point contagion. It returns
   ;; the type of the result, and the types of T1 and T2, if they
@@ -68,23 +68,23 @@
         (output nil)
         (default (if only-real 'REAL 'NUMBER))
         (types-list (if only-real
-                        '(FIXNUM INTEGER RATIONAL
-                          #+short-float SHORT-FLOAT SINGLE-FLOAT
+                        '(FIXNUM INTEGER RATIONAL SINGLE-FLOAT
                           DOUBLE-FLOAT #+long-float LONG-FLOAT FLOAT REAL
                           NUMBER)
-                        '(FIXNUM INTEGER RATIONAL
-                          #+short-float SHORT-FLOAT SINGLE-FLOAT
+                        '(FIXNUM INTEGER RATIONAL SINGLE-FLOAT
                           DOUBLE-FLOAT #+long-float LONG-FLOAT FLOAT REAL))))
-    (dolist (i types-list
-             (values (if (and t1-eq t2-eq output) output default)
-                     (if t1-eq t1 default)
-                     (if t2-eq t2 default)))
+    (dolist (i types-list)
       (when (and (null t1-eq) (type>= i t1))
         (if (equalp t1 t2)
             (setf t2-eq i))
         (setf t1-eq i output i))
       (when (and (null t2-eq) (type>= i t2))
-        (setf t2-eq i output i)))))
+        (setf t2-eq i output i)))
+    (unless (and t1-eq t2-eq output)
+      (setf output default))
+    (when (and integer-result (or (eq output 'fixnum) (eq output 'integer)))
+      (setf output integer-result))
+    (values output (if t1-eq t1 default) (if t2-eq t2 default))))
 
 (defun ensure-number-type (general-type)
   (maximum-number-type general-type general-type))
@@ -93,7 +93,7 @@
   (maximum-number-type general-type 'single-float))
 
 (defun ensure-real-type (general-type)
-  (maximum-number-type general-type 'integer :only-real))
+  (maximum-number-type general-type 'integer :only-real t))
 
 (defun arithmetic-propagator (op1-type others integer-result)
   ;; Propagates types for an associative operator (we do not care which one).
@@ -108,9 +108,7 @@
        for op2-type = x
        do (progn
             (multiple-value-setq (result-type op1-type op2-type)
-              (maximum-number-type result-type op2-type))
-            (when (or (eq result-type 'FIXNUM) (eq result-type 'INTEGER))
-              (setf result-type integer-result))
+              (maximum-number-type result-type op2-type :integer-result integer-result))
             (setf arg-types (cons op2-type arg-types)))
        finally (return (values (nreverse arg-types) result-type)))))
 
@@ -121,6 +119,78 @@
 
 (def-type-propagator / (fname op1 &rest others)
   (arithmetic-propagator op1 others 'rational))
+
+(defun inline-binop (expected-type arg1 arg2 integer-result-type
+		     consing non-consing)
+  (if (and (policy-assume-right-type)
+           (c-number-type-p expected-type)
+           (c-number-type-p (inlined-arg-type arg1))
+           (c-number-type-p (inlined-arg-type arg2)))
+      (produce-inline-loc (list arg1 arg2)
+                          (list (lisp-type->rep-type (inlined-arg-type arg1))
+                                (lisp-type->rep-type (inlined-arg-type arg2)))
+                          (list (lisp-type->rep-type expected-type))
+                          non-consing nil t)
+      (produce-inline-loc (list arg1 arg2) '(:object :object) '(:object)
+                          consing nil t)))
+
+(defun inline-arith-unop (expected-type arg1 consing non-consing)
+  (if (and (policy-assume-right-type)
+           (c-number-type-p expected-type)
+           (c-number-type-p (inlined-arg-type arg1)))
+      (produce-inline-loc (list arg1)
+                          (list (lisp-type->rep-type (inlined-arg-type arg1)))
+                          (list (lisp-type->rep-type expected-type))
+                          non-consing nil t)
+      (produce-inline-loc (list arg1) '(:object :object) '(:object)
+                          consing nil t)))
+
+(define-c-inliner + (return-type &rest arguments &aux arg1 arg2)
+  (when (null arguments)
+    (return '(fixnum-value 0)))
+  (setf arg1 (pop arguments))
+  (when (null arguments)
+    (return (inlined-arg-loc arg1)))
+  (loop for arg2 = (pop arguments)
+     for result = (inline-binop return-type arg1 arg2 'integer
+				"ecl_plus(#0,#1)" "(#0)+(#1)")
+     do (if arguments
+	    (setf arg1 (save-inline-loc result))
+	    (return result))))
+
+(define-c-inliner - (return-type arg1 &rest arguments &aux arg2)
+  (when (null arguments)
+    (return (inline-arith-unop return-type arg1 "ecl_negate(#0)" "-(#0)")))
+  (loop for arg2 = (pop arguments)
+     for result = (inline-binop return-type arg1 arg2 'integer
+				"ecl_minus(#0,#1)" "(#0)-(#1)")
+     do (if arguments
+	    (setf arg1 (save-inline-loc result))
+	    (return result))))
+
+(define-c-inliner * (return-type &rest arguments &aux arg1 arg2)
+  (when (null arguments)
+    (return '(fixnum-value 1)))
+  (setf arg1 (pop arguments))
+  (when (null arguments)
+    (return (inlined-arg-loc arg1)))
+  (loop for arg2 = (pop arguments)
+     for result = (inline-binop return-type arg1 arg2 'integer
+				"ecl_times(#0,#1)" "(#0)*(#1)")
+     do (if arguments
+	    (setf arg1 (save-inline-loc result))
+	    (return result))))
+
+(define-c-inliner / (return-type arg1 &rest arguments &aux arg2)
+  (when (null arguments)
+    (return (inline-arith-unop return-type arg1
+                               "ecl_divide(MAKE_FIXNUM(1),(#0))" "1/(#0)")))
+  (loop for arg2 = (pop arguments)
+     for result = (inline-binop return-type arg1 arg2 'rational
+				"ecl_divide(#0,#1)" "(#0)/(#1)")
+     do (if arguments
+	    (setf arg1 (save-inline-loc result))
+	    (return result))))
 
 ;;;
 ;;; SPECIAL FUNCTIONS
@@ -143,7 +213,7 @@
       (ensure-nonrational-type op1-type)
     (if op2-p
         (multiple-value-bind (result t1 t2)
-            (maximum-number-type t1 op2-type :only-real)
+            (maximum-number-type t1 op2-type :only-real t)
           (values (list t1 t2) result))
         (values (list t1) t1))))
 

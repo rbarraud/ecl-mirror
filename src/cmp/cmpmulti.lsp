@@ -91,12 +91,13 @@
    ;; For a single form, we must simply ensure that we only take a single
    ;; value of those that the function may output.
    ((endp (rest forms))
-    ;; ... FIXME! This can be improved! It leads to code like
-    ;;		value0 = <computed value>;
-    ;;		T0 = value0;
-    (let ((*destination* 'VALUE0))
-      (c2expr* (first forms)))
-    (unwind-exit 'VALUE0))
+    (let ((form (first forms)))
+      (if (or (not (member *destination* '(RETURN VALUES)))
+              (c1form-single-valued-p form))
+          (c2expr form)
+          (progn
+            (let ((*destination* 'VALUE0)) (c2expr* form))
+            (unwind-exit 'VALUE0)))))
    ;; In all other cases, we store the values in the VALUES vector,
    ;; and force the compiler to retrieve anything out of it.
    (t
@@ -144,29 +145,19 @@
 	   (add-to-set-nodes-of-var-list
 	    vars (make-c1form* 'MULTIPLE-VALUE-SETQ :args vars value))))))
 
-(defun c1form-values-number (form)
-  (let ((type (c1form-type form)))
-    (cond ((or (eq type 'T) (eq type '*))
-	   (values 0 MULTIPLE-VALUES-LIMIT))
-	  ((or (atom type) (not (eq (first type) 'VALUES)))
-	   (values 1 1))
-	  ((or (member '&rest type) (member 'optional type))
-	   (values 0 MULTIPLE-VALUES-LIMIT))
-	  (t
-	   (let ((l (1- (length type))))
-	     (values l l))))))
-
 (defun do-m-v-setq-fixed (nvalues vars form use-bind &aux (output (first vars)))
   ;; This routine should evaluate FORM and store the values (whose amount
   ;; is known to be NVALUES) into the variables VARS. The output is a
-  ;; place from where the first value can be retreived
+  ;; place from where the first value can be retreived.
+  ;; INV: There is at least one variable.
   ;;
   (if (or (> nvalues 1) use-bind)
       (let ((*destination* 'VALUES))
 	(c2expr* form)
-	(dotimes (i nvalues)
-	  (funcall (if use-bind #'bind-var #'set-var)
-		   (values-loc i) (pop vars))))
+	(loop for i from 0 below nvalues
+	   while vars
+	   do (funcall (if use-bind #'bind-var #'set-var)
+		       (values-loc i) (pop vars))))
       (let ((*destination* (pop vars)))
 	(c2expr* form)))
   (dolist (v vars)
@@ -238,9 +229,10 @@
 	   (c2expr* form)
 	   (do-m-v-setq-any min-values max-values vars nil))))))
 
-(defun c1multiple-value-bind (args &aux (*cmp-env* (cmp-env-copy)))
+(defun c1multiple-value-bind (args)
   (check-args-number 'MULTIPLE-VALUE-BIND args 2)
-  (let* ((variables (pop args))
+  (let* ((*cmp-env* (cmp-env-copy))
+         (variables (pop args))
          (init-form (pop args)))
     (when (= (length variables) 1)
       (return-from c1multiple-value-bind
@@ -306,15 +298,3 @@
     (wt "}"))
   )
 
-;;; ----------------------------------------------------------------------
-
-(put-sysprop 'multiple-value-call 'c1special 'c1multiple-value-call)
-(put-sysprop 'multiple-value-call 'c2 'c2multiple-value-call)
-(put-sysprop 'multiple-value-prog1 'c1special 'c1multiple-value-prog1)
-(put-sysprop 'multiple-value-prog1 'c2 'c2multiple-value-prog1)
-(put-sysprop 'values 'c1 'c1values)
-(put-sysprop 'values 'c2 'c2values)
-(put-sysprop 'multiple-value-setq 'c1 'c1multiple-value-setq)
-(put-sysprop 'multiple-value-setq 'c2 'c2multiple-value-setq)
-(put-sysprop 'multiple-value-bind 'c1 'c1multiple-value-bind)
-(put-sysprop 'multiple-value-bind 'c2 'c2multiple-value-bind)

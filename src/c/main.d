@@ -19,7 +19,7 @@
 
 #include <ecl/ecl.h>
 #include <limits.h>
-#if defined(_MSC_VER) || defined(__MINGW32__)
+#if defined(ECL_MS_WINDOWS_HOST)
 # include <windows.h>
 # include <shellapi.h>
 # define MAXPATHLEN 512
@@ -41,7 +41,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ecl/internal.h>
+#include <ecl/ecl-inl.h>
 extern int GC_dont_gc;
+
+#include "ecl_features.h"
+#include "iso_latin_names.h"
 
 /******************************* EXPORTS ******************************/
 
@@ -50,7 +54,6 @@ cl_env_ptr cl_env_p = NULL;
 #elif defined(WITH___THREAD)
 __thread cl_env_ptr cl_env_p = NULL;
 #endif
-struct cl_core_struct cl_core;
 const char *ecl_self;
 
 /************************ GLOBAL INITIALIZATION ***********************/
@@ -68,6 +71,7 @@ static cl_fixnum option_values[ECL_OPT_LIMIT+1] = {
 	1,		/* ECL_OPT_TRAP_SIGINT */
 	1,		/* ECL_OPT_TRAP_SIGILL */
 	1,		/* ECL_OPT_TRAP_SIGBUS */
+	1,		/* ECL_OPT_TRAP_SIGPIPE */
 	1,		/* ECL_OPT_TRAP_INTERRUPT_SIGNAL */
 	1,		/* ECL_OPT_SIGNAL_HANDLING_THREAD */
 	128,		/* ECL_OPT_SIGNAL_QUEUE_SIZE */
@@ -95,92 +99,6 @@ static cl_fixnum option_values[ECL_OPT_LIMIT+1] = {
 static char stdin_buf[BUFSIZ];
 static char stdout_buf[BUFSIZ];
 #endif
-
-static const char *feature_names[] = {
-        "ECL", "COMMON", ECL_ARCHITECTURE, "FFI", "PREFIXED-API",
-#ifdef ECL_IEEE_FP
-        "IEEE-FLOATING-POINT",
-#endif
-#ifdef WITH_GMP
-        "COMMON-LISP",
-        "ANSI-CL",
-#endif /* WITH_GMP */
-#if defined(GBC_BOEHM)
-	"BOEHM-GC",
-#endif
-#ifdef ECL_THREADS
-	"THREADS",
-#endif
-#ifdef ECL_SEMAPHORES
-	"SEMAPHORES",
-#endif
-#ifdef CLOS
-	"CLOS",
-#endif
-#ifdef ENABLE_DLOPEN
-	"DLOPEN",
-#endif
-#ifdef ECL_OLD_LOOP
-	"OLD-LOOP",
-#endif
-	"ECL-PDE",
-#ifdef unix
-	"UNIX",
-#endif
-#ifdef BSD
-	"BSD",
-#endif
-#ifdef SYSV
-	"SYSTEM-V",
-#endif
-#ifdef MSDOS
-	"MS-DOS",
-#endif
-#if defined(__MINGW32__)
-	"MINGW32",
-        "WIN32",
-#endif
-#ifdef _MSC_VER
-	"MSVC",
-#endif
-#if defined(_MSC_VER) || defined(__MINGW32__)
-        "WINDOWS",
-#endif
-#ifdef ECL_CMU_FORMAT
-	"CMU-FORMAT",
-#endif
-#ifdef ECL_CLOS_STREAMS
-	"CLOS-STREAMS",
-#endif
-#if defined(ECL_DYNAMIC_FFI) || defined(HAVE_LIBFFI)
-	"DFFI",
-#endif
-#ifdef ECL_UNICODE
-	"UNICODE",
-#endif
-#ifdef ECL_LONG_FLOAT
-	"LONG-FLOAT",
-#endif
-#ifdef ECL_SHORT_FLOAT
-	"SHORT-FLOAT",
-#endif
-#ifdef ECL_RELATIVE_PACKAGE_NAMES
-	"RELATIVE-PACKAGE-NAMES",
-#endif
-#ifdef ecl_uint16_t
-        "UINT16-T",
-#endif
-#ifdef ecl_uint32_t
-        "UINT32-T",
-#endif
-#ifdef ecl_uint64_t
-        "UINT64-T",
-#endif
-#ifdef ecl_long_long_t
-        "LONG-LONG",
-#endif
-        0
-};
 
 cl_fixnum
 ecl_get_option(int option)
@@ -220,9 +138,6 @@ ecl_init_env(cl_env_ptr env)
 	ecl_stack_set_size(env, ecl_get_option(ECL_OPT_LISP_STACK_SIZE));
 
 #if !defined(ECL_CMU_FORMAT)
-	env->print_pretty = FALSE;
-	env->queue = ecl_alloc_atomic(ECL_PPRINT_QUEUE_SIZE * sizeof(short));
-	env->indent_stack = ecl_alloc_atomic(ECL_PPRINT_INDENTATION_STACK_SIZE * sizeof(short));
 	env->fmt_aux_stream = ecl_make_string_output_stream(64, 1);
 #endif
 #ifdef HAVE_LIBFFI
@@ -259,9 +174,10 @@ ecl_init_env(cl_env_ptr env)
         }
 
         env->trap_fpe_bits = 0;
-}
 
-#include "iso_latin_names.h"
+        env->packages_to_be_created = Cnil;
+        env->packages_to_be_created_p = Cnil;
+}
 
 void
 _ecl_dealloc_env(cl_env_ptr env)
@@ -391,6 +307,163 @@ read_char_database()
 #define read_char_database() (void)0
 #endif
 
+ecl_def_ct_single_float(default_rehash_size,1.5f,static,const);
+ecl_def_ct_single_float(default_rehash_threshold,0.75f,static,const);
+ecl_def_ct_base_string(str_common_lisp,"COMMON-LISP",11,static,const);
+ecl_def_ct_base_string(str_common_lisp_user,"COMMON-LISP-USER",16,static,const);
+ecl_def_ct_base_string(str_cl,"CL",2,static,const);
+ecl_def_ct_base_string(str_cl_user,"CL-USER",7,static,const);
+ecl_def_ct_base_string(str_LISP,"LISP",4,static,const);
+ecl_def_ct_base_string(str_c,"C",1,static,const);
+ecl_def_ct_base_string(str_compiler,"COMPILER",11,static,const);
+ecl_def_ct_base_string(str_user,"USER",4,static,const);
+ecl_def_ct_base_string(str_keyword,"KEYWORD",7,static,const);
+ecl_def_ct_base_string(str_si,"SI",2,static,const);
+ecl_def_ct_base_string(str_sys,"SYS",3,static,const);
+ecl_def_ct_base_string(str_system,"SYSTEM",6,static,const);
+ecl_def_ct_base_string(str_ext,"EXT",3,static,const);
+#ifdef CLOS
+ecl_def_ct_base_string(str_clos,"CLOS",4,static,const);
+#endif
+ecl_def_ct_base_string(str_mp,"MP",2,static,const);
+ecl_def_ct_base_string(str_multiprocessing,"MULTIPROCESSING",15,static,const);
+#ifdef ECL_CLOS_STREAMS
+ecl_def_ct_base_string(str_gray,"GRAY",4,static,const);
+#endif
+ecl_def_ct_base_string(str_null,"Null",4,static,const);
+ecl_def_ct_base_string(str_linefeed,"Linefeed",8,static,const);
+ecl_def_ct_base_string(str_bell,"Bell",4,static,const);
+ecl_def_ct_base_string(str_escape,"Escape",6,static,const);
+ecl_def_ct_base_string(str_star_dot_star,"*.*",3,static,const);
+ecl_def_ct_base_string(str_rel_star_dot_star,"./*.*",5,static,const);
+ecl_def_ct_base_string(str_empty,"",0,static,const);
+ecl_def_ct_base_string(str_G,"G",1,static,const);
+ecl_def_ct_base_string(str_T,"T",1,static,const);
+#ifdef ENABLE_DLOPEN
+ecl_def_ct_base_string(str_fas,"fas",3,static,const);
+ecl_def_ct_base_string(str_fasl,"fasl",4,static,const);
+#endif
+ecl_def_ct_base_string(str_fasb,"fasb",4,static,const);
+ecl_def_ct_base_string(str_FASB,"FASB",4,static,const);
+ecl_def_ct_base_string(str_lsp,"lsp",3,static,const);
+ecl_def_ct_base_string(str_LSP,"LSP",3,static,const);
+ecl_def_ct_base_string(str_lisp,"lisp",4,static,const);
+ecl_def_ct_base_string(str_NIL,"NIL",3,static,const);
+ecl_def_ct_base_string(str_slash,"/",1,static,const);
+
+ecl_def_ct_single_float(flt_zero,0,static,const);
+ecl_def_ct_single_float(flt_zero_neg,-0.0,static,const);
+ecl_def_ct_double_float(dbl_zero,0,static,const);
+ecl_def_ct_double_float(dbl_zero_neg,-0.0,static,const);
+#ifdef ECL_LONG_FLOAT
+ecl_def_ct_long_float(ldbl_zero,0,static,const);
+ecl_def_ct_long_float(ldbl_zero_neg,-0.0l,static,const);
+#endif
+ecl_def_ct_ratio(plus_half,MAKE_FIXNUM(1),MAKE_FIXNUM(2),static,const);
+ecl_def_ct_ratio(minus_half,MAKE_FIXNUM(-1),MAKE_FIXNUM(2),static,const);
+ecl_def_ct_single_float(flt_one,1,static,const);
+ecl_def_ct_single_float(flt_one_neg,-1,static,const);
+ecl_def_ct_single_float(flt_two,2,static,const);
+ecl_def_ct_complex(flt_imag_unit,&flt_zero_data,&flt_one_data,static,const);
+ecl_def_ct_complex(flt_imag_unit_neg,&flt_zero_data,&flt_one_neg_data,static,const);
+ecl_def_ct_complex(flt_imag_two,&flt_zero_data,&flt_two_data,static,const);
+
+struct cl_core_struct cl_core = {
+	Cnil, /* packages */
+	Cnil, /* lisp_package */
+	Cnil, /* user_package */
+	Cnil, /* keyword_package */
+	Cnil, /* system_package */
+#ifdef CLOS
+	Cnil, /* clos_package */
+# ifdef ECL_CLOS_STREAMS
+	Cnil, /* gray_package */
+# endif
+#endif
+	Cnil, /* mp_package */
+        Cnil, /* c_package */
+
+	Cnil, /* pathname_translations */
+        Cnil, /* library_pathname */
+
+	Cnil, /* terminal_io */
+	Cnil, /* null_stream */
+	Cnil, /* standard_input */
+	Cnil, /* standard_output */
+	Cnil, /* error_output */
+	Cnil, /* standard_readtable */
+	Cnil, /* dispatch_reader */
+	Cnil, /* default_dispatch_macro */
+
+	Cnil, /* char_names */
+	(cl_object)&str_empty_data, /* null_string */
+
+	(cl_object)&plus_half_data, /* plus_half */
+	(cl_object)&minus_half_data, /* minus_half */
+	(cl_object)&flt_imag_unit_data, /* imag_unit */
+	(cl_object)&flt_imag_unit_neg_data, /* minus_imag_unit */
+	(cl_object)&flt_imag_two_data, /* imag_two */
+	(cl_object)&flt_zero_data, /* singlefloat_zero */
+	(cl_object)&dbl_zero_data, /* doublefloat_zero */
+	(cl_object)&flt_zero_neg_data, /* singlefloat_minus_zero */
+	(cl_object)&dbl_zero_neg_data, /* doublefloat_minus_zero */
+#ifdef ECL_LONG_FLOAT
+	(cl_object)&ldbl_zero_data, /* longfloat_zero */
+	(cl_object)&ldbl_zero_neg_data, /* longfloat_minus_zero */
+#endif
+
+	(cl_object)&str_G_data, /* gensym_prefix */
+	(cl_object)&str_T_data, /* gentemp_prefix */
+	MAKE_FIXNUM(0), /* gentemp_counter */
+
+	Cnil, /* Jan1st1970UT */
+
+	Cnil, /* system_properties */
+
+#ifdef ECL_THREADS
+	Cnil, /* processes */
+	Cnil, /* global_lock */
+        Cnil, /* error_lock */
+        Cnil, /* package_lock */
+#endif
+	/* LIBRARIES is an adjustable vector of objects. It behaves as
+	   a vector of weak pointers thanks to the magic in
+	   gbc.d/alloc_2.d */
+	Cnil, /* libraries */
+
+	0, /* max_heap_size */
+	Cnil, /* bytes_consed */
+	Cnil, /* gc_counter */
+	0, /* gc_stats */
+	0, /* path_max */
+#ifdef GBC_BOEHM
+        NULL, /* safety_region */
+#endif
+#ifdef ECL_THREADS
+        Cnil, /* signal_queue_lock */
+#endif
+	Cnil, /* signal_queue */
+
+#ifdef ECL_UNICODE
+	Cnil, /* unicode_database */
+	NULL, /* ucd_misc */
+	NULL, /* ucd_pages */
+	NULL, /* ucd_data */
+#endif
+	NULL, /* default_sigmask */
+
+#ifdef ECL_THREADS
+        0, /* last_var_index */
+        Cnil, /* reused_indices */
+#endif
+	(cl_object)&str_slash_data, /* slash */
+
+	Cnil, /* compiler_dispatch */
+
+        (cl_object)&default_rehash_size_data, /* rehash_size */
+        (cl_object)&default_rehash_threshold_data /* rehash_threshold */
+};
+
 int
 cl_boot(int argc, char **argv)
 {
@@ -419,19 +492,14 @@ cl_boot(int argc, char **argv)
 	ARGV = argv;
 	ecl_self = argv[0];
 
-#ifdef ECL_THREADS
-        cl_core.processes = Cnil;
-#endif
-        cl_core.default_sigmask = 0;
-
 	init_unixint(0);
 	init_alloc();
 	GC_disable();
 	env = _ecl_alloc_env();
-#if !defined(ECL_THREADS) || defined(WITH__THREAD)
-	cl_env_p = env;
+#ifdef ECL_THREADS
+        init_threads(env);
 #else
-	init_threads(env);
+	cl_env_p = env;
 #endif
 
 	/*
@@ -441,7 +509,7 @@ cl_boot(int argc, char **argv)
 	Cnil_symbol->symbol.t = t_symbol;
 	Cnil_symbol->symbol.dynamic = 0;
 	Cnil_symbol->symbol.value = Cnil;
-	Cnil_symbol->symbol.name = make_constant_base_string("NIL");
+	Cnil_symbol->symbol.name = str_NIL;
 	Cnil_symbol->symbol.gfdef = Cnil;
 	Cnil_symbol->symbol.plist = Cnil;
 	Cnil_symbol->symbol.hpack = Cnil;
@@ -454,7 +522,7 @@ cl_boot(int argc, char **argv)
 	Ct->symbol.t = (short)t_symbol;
 	Ct->symbol.dynamic = 0;
 	Ct->symbol.value = Ct;
-	Ct->symbol.name = make_constant_base_string("T");
+	Ct->symbol.name = str_T;
 	Ct->symbol.gfdef = Cnil;
 	Ct->symbol.plist = Cnil;
 	Ct->symbol.hpack = Cnil;
@@ -469,43 +537,36 @@ cl_boot(int argc, char **argv)
 #else
 	cl_core.path_max = MAXPATHLEN;
 #endif
-	cl_core.slash = make_constant_base_string("/");
 
-	cl_core.packages = Cnil;
-	cl_core.packages_to_be_created = OBJNULL;
-
+        env->packages_to_be_created = Cnil;
 	cl_core.lisp_package =
-		ecl_make_package(make_constant_base_string("COMMON-LISP"),
-				 cl_list(2, make_constant_base_string("CL"),
-					 make_constant_base_string("LISP")),
+		ecl_make_package(str_common_lisp,
+				 cl_list(2, str_cl, str_LISP),
 				 Cnil);
 	cl_core.user_package =
-		ecl_make_package(make_constant_base_string("COMMON-LISP-USER"),
-				 cl_list(2, make_constant_base_string("CL-USER"),
-					 make_constant_base_string("USER")),
+		ecl_make_package(str_common_lisp_user,
+				 cl_list(2, str_cl_user, str_user),
 				 ecl_list1(cl_core.lisp_package));
 	cl_core.keyword_package =
-		ecl_make_package(make_constant_base_string("KEYWORD"),
-				 Cnil, Cnil);
+		ecl_make_package(str_keyword, Cnil, Cnil);
 	cl_core.system_package =
-		ecl_make_package(make_constant_base_string("SI"),
-				 cl_list(3,
-					 make_constant_base_string("SYSTEM"),
-					 make_constant_base_string("SYS"),
-					 make_constant_base_string("EXT")),
+		ecl_make_package(str_si,
+                                 cl_list(3,str_system,str_sys,str_ext),
+				 ecl_list1(cl_core.lisp_package));
+	cl_core.c_package =
+		ecl_make_package(str_c,
+                                 ecl_list1(str_compiler),
 				 ecl_list1(cl_core.lisp_package));
 #ifdef CLOS
 	cl_core.clos_package =
-		ecl_make_package(make_constant_base_string("CLOS"),
-				 Cnil, ecl_list1(cl_core.lisp_package));
+		ecl_make_package(str_clos, Cnil, ecl_list1(cl_core.lisp_package));
 #endif
 	cl_core.mp_package =
-		ecl_make_package(make_constant_base_string("MP"),
-				 ecl_list1(make_constant_base_string("MULTIPROCESSING")),
+		ecl_make_package(str_mp,
+				 ecl_list1(str_multiprocessing),
 				 ecl_list1(cl_core.lisp_package));
 #ifdef ECL_CLOS_STREAMS
-	cl_core.gray_package = ecl_make_package(make_constant_base_string("GRAY"),
-						Cnil,
+	cl_core.gray_package = ecl_make_package(str_gray, Cnil,
 						CONS(cl_core.lisp_package, Cnil));
 #endif
 
@@ -540,18 +601,14 @@ cl_boot(int argc, char **argv)
         /*
          * Initialize default pathnames
          */
-	cl_core.pathname_translations = Cnil;
-        cl_core.library_pathname = Cnil;
 #if 1
 	ECL_SET(@'*default-pathname-defaults*', si_getcwd(0));
 #else
 	ECL_SET(@'*default-pathname-defaults*',
-		ecl_make_pathname(Cnil, Cnil, Cnil, Cnil, Cnil, Cnil));
+		ecl_make_pathname(Cnil, Cnil, Cnil, Cnil, Cnil, Cnil, @':local'));
 #endif
 
 #ifdef ECL_THREADS
-        cl_core.last_var_index = 0;
-        cl_core.reused_indices = Cnil;
 	env->bindings_array = si_make_vector(Ct, MAKE_FIXNUM(256),
                                             Cnil, Cnil, Cnil, Cnil);
         si_fill_array_with_elt(env->bindings_array, OBJNULL, MAKE_FIXNUM(0), Cnil);
@@ -572,68 +629,42 @@ cl_boot(int argc, char **argv)
 	 */
 	cl_core.char_names = aux =
 	    cl__make_hash_table(@'equalp', MAKE_FIXNUM(128), /* size */
-				ecl_make_singlefloat(1.5f), /* rehash-size */
-				ecl_make_singlefloat(0.5f), /* rehash-threshold */
+				cl_core.rehash_size,
+                                cl_core.rehash_threshold,
 				Cnil); /* thread-safe */
-	for (i = 0; char_names[i]; i++) {
-		cl_object name = make_constant_base_string(char_names[i]);
+	for (i = 0; char_names[i].elt.self; i++) {
+                cl_object name = (cl_object)(char_names + i);
 		cl_object code = MAKE_FIXNUM(i);
 		ecl_sethash(name, aux, code);
 		ecl_sethash(code, aux, name);
 	}
-	{
-		/* Linefeed is redundant with one of the names given
-		 * in iso_latin_names.h, but it can not be associated
-		 * to the code 10, because the default name must be
-		 * Newline. Similar to the other codes. */
-                static struct {
-                        const char *name;
-                        int code;
-                } extra_names[] = { { "Null", 0 },
-                                    { "Linefeed", 10 },
-                                    { "Bell", 7 },
-                                    { "Escape", 27 } };
-                for (i = 0; i < 4; i++) {
-                        cl_object name = make_constant_base_string(extra_names[i].name);
-                        ecl_sethash(name, aux, MAKE_FIXNUM(extra_names[i].code));
-                }
-	}
+        /* Linefeed is redundant with one of the names given in
+         * iso_latin_names.h, but it can not be associated to the code
+         * 10, because the default name must be Newline. Similar to
+         * the other codes. */
+        ecl_sethash(str_null, aux, MAKE_FIXNUM(0));
+        ecl_sethash(str_linefeed, aux, MAKE_FIXNUM(10));
+        ecl_sethash(str_bell, aux, MAKE_FIXNUM(7));
+        ecl_sethash(str_escape, aux, MAKE_FIXNUM(27));
 
         /*
          * Initialize logical pathname translations. This must come after
          * the character database has been filled.
          */
-	@si::pathname-translations(2,make_constant_base_string("SYS"),
-				   cl_list(1,cl_list(2,make_constant_base_string("*.*"),
-						     make_constant_base_string("./*.*"))));
+	@si::pathname-translations(2,str_sys,
+                                   ecl_list1(cl_list(2,str_star_dot_star,
+                                                     str_rel_star_dot_star)));
 
 	/*
 	 * Initialize constants (strings, numbers and time).
 	 */
-
-	/* LIBRARIES is an adjustable vector of objects. It behaves as
-	   a vector of weak pointers thanks to the magic in
-	   gbc.d/alloc_2.d */
-	cl_core.libraries = Cnil;
-	cl_core.bytes_consed = Cnil;
-	cl_core.gc_counter = Cnil;
-	cl_core.gc_stats = FALSE;
-
-	cl_core.null_string = make_constant_base_string("");
-
-	cl_core.null_stream = Cnil; /* Filled in file.d */
-
 	cl_core.system_properties =
 	    cl__make_hash_table(@'equal', MAKE_FIXNUM(1024), /* size */
-				ecl_make_singlefloat(1.5f), /* rehash-size */
-				ecl_make_singlefloat(0.75f), /* rehash-threshold */
+				cl_core.rehash_size,
+                                cl_core.rehash_threshold,
 				Ct); /* thread-safe */
 
-	cl_core.gensym_prefix = make_constant_base_string("G");
-	cl_core.gentemp_prefix = make_constant_base_string("T");
-	cl_core.gentemp_counter = MAKE_FIXNUM(0);
-
-	init_number();
+	ECL_SET(@'*random-state*', ecl_make_random_state(Ct));
 
 	ECL_SET(@'si::c-int-max', ecl_make_integer(INT_MAX));
 	ECL_SET(@'si::c-int-min', ecl_make_integer(INT_MIN));
@@ -661,22 +692,23 @@ cl_boot(int argc, char **argv)
 #endif
 	aux = cl_list(
 #ifdef ENABLE_DLOPEN
-		10,CONS(make_constant_base_string("fas"), @'si::load-binary'),
-		CONS(make_constant_base_string("fasl"), @'si::load-binary'),
-		CONS(make_constant_base_string("fasb"), @'si::load-binary'),
+		10,CONS(str_fas, @'si::load-binary'),
+		CONS(str_fasl, @'si::load-binary'),
+		CONS(str_fasb, @'si::load-binary'),
 #else
 		7,
 #endif
-		CONS(make_constant_base_string("lsp"), @'si::load-source'),
-		CONS(make_constant_base_string("lisp"), @'si::load-source'),
-		CONS(make_constant_base_string("LSP"), @'si::load-source'),
-		CONS(make_constant_base_string("LISP"), @'si::load-source'),
-		CONS(make_constant_base_string("fasb"), @'si::load-source'),
-		CONS(make_constant_base_string("FASB"), @'si::load-source'),
+		CONS(str_lsp, @'si::load-source'),
+		CONS(str_lisp, @'si::load-source'),
+		CONS(str_LSP, @'si::load-source'),
+		CONS(str_LISP, @'si::load-source'),
+		CONS(str_fasb, @'si::load-source'),
+		CONS(str_FASB, @'si::load-source'),
 		CONS(Cnil, @'si::load-source'));
 	ECL_SET(@'si::*load-hooks*', aux);
 	init_error();
 	init_macros();
+	init_compiler();
 
 	/*
 	 * Set up infrastructure for CLOS.
@@ -684,8 +716,8 @@ cl_boot(int argc, char **argv)
 #ifdef CLOS
 	ECL_SET(@'si::*class-name-hash-table*',
 		cl__make_hash_table(@'eq', MAKE_FIXNUM(1024), /* size */
-				    ecl_make_singlefloat(1.5f), /* rehash-size */
-				    ecl_make_singlefloat(0.75f), /* rehash-threshold */
+                                    cl_core.rehash_size,
+                                    cl_core.rehash_threshold,
 				    Ct)); /* thread safe */
 #endif
 
@@ -697,8 +729,11 @@ cl_boot(int argc, char **argv)
 		cl_list(8, @'&optional', @'&rest', @'&key', @'&allow-other-keys',
 			@'&aux', @'&whole', @'&environment', @'&body'));
 
-        for (i = 0, features = Cnil; feature_names[i]; i++) {
-                features = CONS(ecl_make_keyword(feature_names[i]),features);
+        for (i = 0, features = Cnil; feature_names[i].elt.self; i++) {
+                int flag;
+                cl_object name = (cl_object)(feature_names + i);
+                cl_object key = ecl_intern(name, cl_core.keyword_package, &flag);
+                features = CONS(key, features);
         }
 
 	ECL_SET(@'*features*', features);
@@ -794,7 +829,7 @@ si_setenv(cl_object var, cl_object value)
 		 * the right thing. */
 		unsetenv((char*)var->base_string.self);
 #else
-#if defined(_MSC_VER) || defined(__MINGW32__)
+#if defined(ECL_MS_WINDOWS_HOST)
 		si_setenv(var, make_simple_base_string(""));
 #else
 		putenv((char*)var->base_string.self);
@@ -832,7 +867,7 @@ si_environ(void)
         }
         output = cl_nreverse(output);
 #else
-# if defined(_MSC_VER) || defined(__MINGW32__)
+# if defined(ECL_MS_WINDOWS_HOST)
         LPTCH p;
         for (p = GetEnvironmentStrings(); *p; ) {
                 output = CONS(make_constant_base_string(p), output);
@@ -851,7 +886,7 @@ si_pointer(cl_object x)
 	@(return ecl_make_unsigned_integer((cl_index)x))
 }
 
-#if defined(_MSC_VER) || defined(__MINGW32__)
+#if defined(ECL_MS_WINDOWS_HOST)
 void
 ecl_get_commandline_args(int* argc, char*** argv) {
 	LPWSTR *wArgs;

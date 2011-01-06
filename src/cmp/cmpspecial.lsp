@@ -25,7 +25,7 @@
 (defun c1the (args)
   (check-args-number 'THE args 2 2)
   (let* ((form (c1expr (second args)))
-	 (the-type (type-filter (first args) t))
+	 (the-type (first args))
 	 type)
     (if (setf type (values-type-and the-type (c1form-primary-type form)))
         (setf (c1form-type form) type)
@@ -61,7 +61,6 @@
 	   (let ((funob (local-function-ref fun t)))
 	     (if funob
 		 (let* ((var (fun-var funob)))
-		   (incf (var-ref var))
 		   (add-to-read-nodes var (make-c1form* 'VAR :args var)))
 		 (make-c1form* 'FUNCTION
                                :type 'FUNCTION
@@ -106,9 +105,12 @@
 	     (fun-env fun) 0)))
     (otherwise
      (setf (fun-env fun) 0 (fun-level fun) 0)))
-  (let ((previous (dolist (old *local-funs*)
-		    (when (similar fun old)
-		      (return old)))))
+  (let ((previous
+         nil
+         #+(or)
+         (dolist (old *local-funs*)
+           (when (similar fun old)
+             (return old)))))
     (if previous
 	(progn
           (if (eq (fun-closure fun) 'CLOSURE)
@@ -149,18 +151,3 @@
 	   (wt "ecl_make_cfun((cl_objectfn_fixed)" cfun ",Cnil,Cblock," narg ")"))
 	  (t ; empty environment variable number of args
 	   (wt "ecl_make_cfun_va((cl_objectfn)" cfun ",Cnil,Cblock)")))))
-
-
-;;; ----------------------------------------------------------------------
-
-(put-sysprop 'quote 'c1special 'c1quote)
-(put-sysprop 'function 'c1special 'c1function)
-(put-sysprop 'function 'c2 'c2function)
-(put-sysprop 'the 'c1special 'c1the)
-(put-sysprop 'eval-when 'c1special 'c1eval-when)
-(put-sysprop 'declare 'c1special 'c1declare)
-(put-sysprop 'ext:compiler-let 'c1special 'c1compiler-let)
-(put-sysprop 'ext:compiler-let 'c2 'c2compiler-let)
-
-(put-sysprop 'fdefinition 'wt-loc 'wt-fdefinition)
-(put-sysprop 'make-cclosure 'wt-loc 'wt-make-closure)

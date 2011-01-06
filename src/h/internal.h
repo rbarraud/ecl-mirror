@@ -13,6 +13,9 @@
     See file '../Copyright' for full details.
 */
 
+#ifndef ECL_INTERNAL_H
+#define ECL_INTERNAL_H
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -38,14 +41,11 @@ extern void init_file(void);
 extern void init_GC(void);
 #endif
 extern void init_macros(void);
-extern void init_number(void);
 extern void init_read(void);
 extern void init_stacks(cl_env_ptr);
 extern void init_unixint(int pass);
 extern void init_unixtime(void);
-#if defined(__MINGW32__)
 extern void init_compiler(void);
-#endif
 #ifdef ECL_THREADS
 extern void init_threads(cl_env_ptr);
 #endif
@@ -62,6 +62,41 @@ extern void _ecl_dealloc_env(cl_env_ptr);
 #endif
 extern void _ecl_set_max_heap_size(cl_index new_size);
 extern cl_object ecl_alloc_bytecodes(cl_index data_size, cl_index code_size);
+extern cl_index ecl_object_byte_size(cl_type t);
+
+/* array.d */
+
+#ifdef ECL_DEFINE_AET_SIZE
+#undef ECL_DEFINE_AET_SIZE
+static const cl_index ecl_aet_size[] = {
+  sizeof(cl_object),          /* aet_object */
+  sizeof(float),              /* aet_sf */
+  sizeof(double),             /* aet_df */
+  0,                          /* aet_bit: cannot be handled with this code */
+  sizeof(cl_fixnum),          /* aet_fix */
+  sizeof(cl_index),           /* aet_index */
+  sizeof(uint8_t),            /* aet_b8 */
+  sizeof(int8_t),             /* aet_i8 */
+#ifdef ecl_uint16_t
+  sizeof(ecl_uint16_t),
+  sizeof(ecl_int16_t),
+#endif
+#ifdef ecl_uint32_t
+  sizeof(ecl_uint32_t),
+  sizeof(ecl_int32_t),
+#endif
+#ifdef ecl_uint64_t
+  sizeof(ecl_uint64_t),
+  sizeof(ecl_int64_t),
+#endif
+#ifdef ECL_UNICODE
+  sizeof(ecl_character),      /* aet_ch */
+#endif
+  sizeof(unsigned char)       /* aet_bc */
+};
+#endif /* ECL_DEFINE_AET_SIZE */
+
+extern void ecl_displace(cl_object from, cl_object to, cl_object offset);
 
 /* compiler.d */
 
@@ -94,6 +129,9 @@ typedef struct cl_compiler_env *cl_compiler_env_ptr;
 #define ECL_UCS_LOW_SURROGATE(c) ((c) >= 0xDC00 && (c) <= 0xDFFF)
 #endif
 
+/* error.d */
+
+extern void _ecl_unexpected_return() ecl_attr_noreturn;
 
 /* interpreter.d */
 
@@ -168,6 +206,10 @@ typedef struct cl_compiler_env *cl_compiler_env_ptr;
 
 extern cl_object _ecl_bytecodes_dispatch_vararg(cl_narg narg, ...);
 extern cl_object _ecl_bclosure_dispatch_vararg(cl_narg narg, ...);
+
+/* ffi/backtrace.d */
+
+extern void _ecl_dump_c_backtrace();
 
 /* ffi.d */
 
@@ -252,16 +294,34 @@ extern cl_object ecl_extend_hashtable(cl_object hashtable);
 
 extern cl_object FEnot_funcallable_vararg(cl_narg narg, ...);
 
+/* load.d */
+
+extern cl_object _ecl_library_init_prefix(void);
+extern cl_object _ecl_library_default_entry(void);
+
 /* print.d */
+
+extern cl_object _ecl_stream_or_default_output(cl_object stream);
+extern void _ecl_write_addr(cl_object x, cl_object stream);
+extern void _ecl_write_array(cl_object o, cl_object stream);
+extern void _ecl_write_vector(cl_object o, cl_object stream);
+extern void _ecl_write_bitvector(cl_object o, cl_object stream);
+extern void _ecl_write_string(cl_object o, cl_object stream);
+extern void _ecl_write_base_string(cl_object o, cl_object stream);
+extern void _ecl_write_list(cl_object o, cl_object stream);
+extern void _ecl_write_bclosure(cl_object o, cl_object stream);
+extern void _ecl_write_bytecodes(cl_object o, cl_object stream);
+extern void _ecl_write_symbol(cl_object o, cl_object stream);
+extern void _ecl_write_fixnum(cl_fixnum o, cl_object stream);
+extern void _ecl_write_sse(cl_object o, cl_object stream);
+extern void _ecl_write_unreadable(cl_object x, const char *prefix, cl_object name, cl_object stream);
+extern bool _ecl_will_print_as_hash(cl_object o);
+extern cl_object _ecl_ensure_buffer(cl_object buffer, cl_fixnum length);
+extern void _ecl_string_push_c_string(cl_object s, const char *c);
 
 #define ECL_PPRINT_QUEUE_SIZE			128
 #define ECL_PPRINT_INDENTATION_STACK_SIZE	256
 
-#ifdef ECL_LONG_FLOAT
-extern int edit_double(int n, long double d, int *sp, char *s, int *ep);
-#else
-extern int edit_double(int n, double d, int *sp, char *s, int *ep);
-#endif
 extern void cl_write_object(cl_object x, cl_object stream);
 
 /* global locks */
@@ -275,21 +335,54 @@ extern void cl_write_object(cl_object x, cl_object stream);
                 cl_object lock = (h)->hash.lock;                        \
                 if (lock != Cnil) mp_giveup_lock(lock);                 \
         } while (0);
-# define THREAD_OP_LOCK() mp_get_lock_wait(cl_core.global_lock)
-# define THREAD_OP_UNLOCK() mp_giveup_lock(cl_core.global_lock)
-# define PACKAGE_OP_LOCK() THREAD_OP_LOCK()
-# define PACKAGE_OP_UNLOCK() THREAD_OP_UNLOCK()
-# define ERROR_HANDLER_LOCK() THREAD_OP_LOCK()
-# define ERROR_HANDLER_UNLOCK() THREAD_OP_UNLOCK()
+# define ECL_WITH_GLOBAL_LOCK_BEGIN(the_env)    \
+        ECL_WITH_LOCK_BEGIN(the_env, cl_core.global_lock)
+# define ECL_WITH_GLOBAL_LOCK_END               \
+        ECL_WITH_LOCK_END
+# define ECL_WITH_PACKAGE_RDLOCK_BEGIN(the_env) {                 \
+        const cl_env_ptr __ecl_pack_env = the_env;              \
+        ecl_disable_interrupts_env(__ecl_pack_env);             \
+        mp_get_rwlock_read_wait(cl_core.package_lock);
+# define ECL_WITH_PACKAGE_RDLOCK_END              \
+        mp_giveup_rwlock_read(cl_core.package_lock);   \
+        ecl_enable_interrupts_env(__ecl_pack_env); }
+# define ECL_WITH_PACKAGE_WRLOCK_BEGIN(the_env) {                 \
+        const cl_env_ptr __ecl_pack_env = the_env;              \
+        ecl_disable_interrupts_env(__ecl_pack_env);             \
+        mp_get_rwlock_write_wait(cl_core.package_lock);
+# define ECL_WITH_PACKAGE_WRLOCK_END              \
+        mp_giveup_rwlock_write(cl_core.package_lock);   \
+        ecl_enable_interrupts_env(__ecl_pack_env); }
+# define ECL_WITH_LOCK_BEGIN(the_env,lock) {            \
+        const cl_env_ptr __ecl_the_env = the_env;       \
+        const cl_object __ecl_the_lock = lock;          \
+        ecl_disable_interrupts_env(the_env);            \
+        mp_get_lock_wait(__ecl_the_lock);               \
+        CL_UNWIND_PROTECT_BEGIN(__ecl_the_env)
+# define ECL_WITH_LOCK_END                                    \
+        CL_UNWIND_PROTECT_EXIT {                              \
+                mp_giveup_lock(__ecl_the_lock);               \
+                ecl_enable_interrupts_env(__ecl_the_env);     \
+        } CL_UNWIND_PROTECT_END; }
 #else
 # define HASH_TABLE_LOCK(h)
 # define HASH_TABLE_UNLOCK(h)
-# define PACKAGE_OP_LOCK()
-# define PACKAGE_OP_UNLOCK()
-# define ERROR_HANDLER_LOCK()
-# define ERROR_HANDLER_UNLOCK()
+# define ECL_WITH_GLOBAL_LOCK_BEGIN(the_env)
+# define ECL_WITH_GLOBAL_LOCK_END
+# define ECL_WITH_PACKAGE_RDLOCK_BEGIN(the_env)
+# define ECL_WITH_PACKAGE_RDLOCK_END
+# define ECL_WITH_PACKAGE_WRLOCK_BEGIN(the_env)
+# define ECL_WITH_PACKAGE_WRLOCK_END
+# define ECL_WITH_LOCK_BEGIN(the_env,lock)
+# define ECL_WITH_LOCK_END
 #endif /* ECL_THREADS */
 
+#ifdef ECL_THREADS
+# include <ecl/atomic_ops.h>
+#else
+# define AO_load(x) (x)
+# define AO_store(x,y) ((x)=(y))
+#endif
 
 /* read.d */
 #ifdef ECL_UNICODE
@@ -298,10 +391,22 @@ extern void cl_write_object(cl_object x, cl_object stream);
 #define	RTABSIZE	CHAR_CODE_LIMIT	/*  read table size  */
 #endif
 
-/* string.d */
-typedef struct { cl_index start, end; } cl_index_pair;
-extern ECL_API cl_index_pair ecl_vector_start_end(cl_object fun, cl_object s, cl_object start, cl_object end);
+/* package.d */
 
+extern cl_object _ecl_package_to_be_created(const cl_env_ptr env, cl_object name);
+
+/* sequence.d */
+typedef struct { cl_index start, end, length; } cl_index_pair;
+extern ECL_API cl_index_pair ecl_sequence_start_end(cl_object fun, cl_object s, cl_object start, cl_object end);
+
+/* serialize.d */
+
+extern cl_object si_serialize(cl_object root);
+extern cl_object si_deserialize(cl_object root);
+extern cl_object ecl_deserialize(uint8_t *data);
+
+/* string.d */
+#define ecl_vector_start_end ecl_sequence_start_end
 
 /* threads.d */
 
@@ -317,47 +422,11 @@ extern cl_fixnum ecl_runtime(void);
 
 /* unixint.d */
 
-#ifdef ECL_DEFINE_FENV_CONSTANTS
-# if defined(_MSC_VER) || defined(__MINGW32__)
-#  define HAVE_FEENABLEEXCEPT
-#  include <float.h>
-#  if defined(_MSC_VER)
-#   define FE_DIVBYZERO EM_ZERODIVIDE
-#   define FE_OVERFLOW  EM_OVERFLOW
-#   define FE_UNDERFLOW EM_UNDERFLOW
-#   define FE_INVALID   EM_INVALID
-#   define FE_INEXACT   EM_INEXACT
-typedef int fenv_t;
-#  else
-#   ifdef _MCW_EM
-#    define MCW_EM _MCW_EM
-#   else
-#    define MCW_EM 0x0008001F
-#   endif
-#   define fenv_t int
-#  endif
-#  define feenableexcept(bits) { int cw = _controlfp(0,0); cw &= ~(bits); _controlfp(cw,MCW_EM); }
-#  define fedisableexcept(bits) { int cw = _controlfp(0,0); cw |= (bits); _controlfp(cw,MCW_EM); }
-#  define feholdexcept(bits) { *(bits) = _controlfp(0,0); _controlfp(0xffffffff, MCW_EM); }
-#  define fesetenv(bits) _controlfp(*(bits), MCW_EM)
-#  define feupdateenv(bits) fesetenv(bits)
-# else /* !_MSC_VER */
-#  ifndef HAVE_FENV_H
-#   define FE_INVALID 1
-#   define FE_DIVBYZERO 2
-#   define FE_INEXACT 0
-#   define FE_OVERFLOW 0
-#   define FE_UNDERFLOW 0
-#  endif /* !HAVE_FENV_H */
-# endif /* !_MSC_VER */
-#endif /* !ECL_DEFINE_FENV_CONSTANTS */
-
 #define ECL_PI_D 3.14159265358979323846264338327950288
 #define ECL_PI_L 3.14159265358979323846264338327950288l
 #define ECL_PI2_D 1.57079632679489661923132169163975144
 #define ECL_PI2_L 1.57079632679489661923132169163975144l
 
-void ecl_deliver_fpe(void);
 void ecl_interrupt_process(cl_object process, cl_object function);
 
 /*
@@ -438,3 +507,5 @@ void ecl_interrupt_process(cl_object process, cl_object function);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* ECL_INTERNAL_H */

@@ -196,20 +196,30 @@ their lambda lists ~A and ~A are not congruent."
   ;;  ECL does not need the discriminating function because we always use
   ;;  the same one, we just update the spec-how list of the generic function.
   (compute-g-f-spec-list gf)
+  ;; 
+  ;; Finally update the dependent objects
+  (map-dependents gf #'(lambda (dep) (update-dependents gf dep 'add-method method)))
+  ;;
   gf)
 
-(setf (method-function
-       (eval '(defmethod false-add-method ((gf standard-generic-function)
-					   (method standard-method)))))
-      #'add-method)
-(setf (fdefinition 'add-method) #'false-add-method)
-(setf (generic-function-name #'add-method) 'add-method)
+(defun function-to-method (name signature)
+  (let* ((aux-name 'temp-method)
+         (method (eval `(defmethod ,aux-name ,signature)))
+         (generic-function (fdefinition aux-name)))
+    (setf (method-function method) (fdefinition name))
+    (setf (fdefinition name) generic-function)
+    (setf (generic-function-name generic-function) name)
+    (fmakunbound aux-name)))
+
+(function-to-method 'add-method '((gf standard-generic-function)
+                                  (method standard-method)))
 
 (defun remove-method (gf method)
   (setf (generic-function-methods gf)
 	(delete method (generic-function-methods gf))
 	(method-generic-function method) nil)
   (si:clear-gfun-hash gf)
+  (map-dependents gf #'(lambda (dep) (update-dependents gf dep 'remove-method method)))
   gf)
 
 ;;; ----------------------------------------------------------------------
@@ -244,3 +254,46 @@ their lambda lists ~A and ~A are not congruent."
       (t (error "~A is not a class." new-value))))
   new-value)
 )
+
+;;; ----------------------------------------------------------------------
+;;; DEPENDENT MAINTENANCE PROTOCOL
+;;;
+
+(function-to-method 'map-dependents '((c standard-generic-function) function))
+
+(defmethod map-dependents ((c class) function)
+  (dolist (d (class-dependents c))
+    (funcall function c)))
+
+(function-to-method 'add-dependent '((c standard-generic-function) function))
+
+(defmethod add-dependent ((c class) dep)
+  (pushnew c (class-dependents c)))
+
+(defmethod remove-dependent ((c standard-generic-function) dep)
+  (setf (generic-function-dependents c)
+        (remove dep (generic-function-dependents c))))
+
+(defmethod remove-dependent ((c class) dep)
+  (setf (class-dependents c)
+        (remove dep (class-dependents c))))
+
+(defgeneric update-dependents (object dependents &rest initargs))
+
+(defclass initargs-updater ()
+  ())
+
+(defun recursively-update-classes (a-class)
+  (slot-makunbound a-class 'valid-initargs)
+  (mapc #'recursively-update-classes (class-direct-subclasses a-class)))
+
+(defmethod update-dependents ((object generic-function) (dep initargs-updater)
+                               &rest initargs)
+  (recursively-update-classes +the-class+))
+
+(setf *clos-booted* t)
+
+(let ((x (make-instance 'initargs-updater)))
+  (add-dependent #'shared-initialize x)
+  (add-dependent #'initialize-instance x)
+  (add-dependent #'allocate-instance x))

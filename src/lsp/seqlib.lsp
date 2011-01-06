@@ -12,8 +12,19 @@
 
 ;;;;                           sequence routines
 
-
 (in-package "SYSTEM")
+
+#+ecl-min
+(eval-when (:execute)
+  (load (merge-pathnames "seqmacros.lsp" *load-truename*)))
+
+#-ecl-min
+(eval-when (:compile-toplevel)
+(define-compiler-macro copy-subarray (&rest args)
+  `(ffi:c-inline ,args (:object :fixnum :object :fixnum :fixnum) :void
+                 "ecl_copy_subarray(#0,#1,#2,#3,#4)"
+                 :one-liner t))
+)
 
 (defun seqtype (sequence)
   (declare (si::c-local))
@@ -24,6 +35,22 @@
         ((vectorp sequence) (list 'vector (array-element-type sequence)))
         (t (error "~S is not a sequence." sequence))))
 
+(defun sequence-count (count)
+  (cond ((null count)
+         most-positive-fixnum)
+        ((fixnump count)
+         count)
+        ((integerp count)
+         (if (minusp count)
+             -1
+             most-positive-fixnum))
+        (t
+         (error 'simple-type-error
+                :datum count
+                :expected-type 'integer
+                :format-control "The value of :COUNT is not a valid counter~%~4I~A"
+                :format-arguments (list count)))))
+
 (defun test-error()
   (declare (si::c-local))
   (error "both test and test-not are supplied"))
@@ -33,96 +60,60 @@
 	   (optimize (speed 3) (safety 0)))
   (funcall f x))
 
-(defun sequence-limits (start end seq)
-  (declare (si::c-local))
-  (let* (x0 x1 (l (length seq)))
-    (declare (fixnum x0 x1 l))
-    (unless (and (fixnump start) (>= (setq x0 start) 0))
-      (error 'simple-type-error
-	     :format-control "~S is not a valid :START for sequence ~S"
-	     :format-arguments (list start seq)
-	     :datum start
-	     :expected-type `(integer 0 ,l)))
-    (if end
-	(unless (and (fixnump end) (>= (setq x1 end) 0))
-	  (error 'simple-type-error
-		 :format-control "~S is not a valid :END for sequence ~S"
-		 :format-arguments (list end seq)
-		 :datum end
-		 :expected-type `(or nil (integer 0 ,l))))
-	(setq x1 l))
-    (unless (<= x0 x1)
-      (error ":START = ~S should be smaller or equal to :END = ~S"
-	     start end))
-    (values x0 x1)))
-
-(eval-when (:compile-toplevel :execute)
-  (defmacro with-predicate ((predicate) &body body)
-    `(let ((,predicate (si::coerce-to-function ,predicate)))
-       (macrolet ((,predicate (&rest args)
-		    `(locally (declare (optimize (safety 0) (speed 3)))
-		       (funcall (the function ,',predicate) ,@args))))
-	 ,@body)))
-  (defmacro with-key ((akey) &body body)
-    `(let ((,akey (if ,akey (si::coerce-to-function ,akey) #'identity)))
-       (macrolet ((,akey (value)
-			 `(locally (declare (optimize (safety 0) (speed 3)))
-			    (funcall (the function ,',akey) ,value))))
-	      ,@body)))
-  (defmacro with-tests (&whole whole (test test-not &optional key) &body body)
-    (when key
-      (setf body `((with-key (,key) ,@body))))
-    `(let ((,test (if ,test (si::coerce-to-function ,test)))
-	   (,test-not (if ,test-not (si::coerce-to-function ,test-not))))
-       (and test test-not (test-error))
-       (macrolet ((compare (v1 v2)
-		    `(locally (declare (optimize (safety 0) (speed 3)))
-		       (cond (test (funcall (the function test) ,v1 ,v2))
-			     (test-not (not (funcall (the function test-not)
-						     ,v1 ,v2)))
-			     (t (eql ,v1 ,v2))))
-		    ))
-	 ,@body)))
-  (defmacro with-start-end (start end seq &body body)
-    `(multiple-value-bind (,start ,end)
-        (sequence-limits ,start ,end ,seq) 
-      (declare (fixnum ,start ,end))
-      ,@body)))
-
 (defun reduce (function sequence
                &key from-end
                     (start 0)
                     end
                     key (initial-value nil ivsp))
   (let ((function (si::coerce-to-function function)))
-    (with-start-end start end sequence
+    (declare (optimize (speed 3) (safety 0) (debug 0)))
+    (with-start-end (start end sequence length)
       (with-key (key)
-	(cond ((not from-end)
-	       (when (null ivsp)
-		 (when (>= start end)
-		   (return-from reduce (funcall function)))
-		 (setq initial-value (key (elt sequence start)))
-		 (incf start))
-	       (do ((x initial-value
-		       (funcall function x
-				(prog1 (key (elt sequence start))
-				  (incf start)))))
-		   ((>= start end) x)))
-	      (t
-	       (when (null ivsp)
-                 (when (>= start end)
-		   (return-from reduce (funcall function)))
-                 (decf end)
-                 (setq initial-value (elt sequence end)))
-	       (do ((x initial-value (funcall function
-					      (key (elt sequence end))
-					      x)))
-		   ((>= start end) x)
-		 (decf end))))))))
+        (cond ((>= start end)
+               (if ivsp
+                   initial-value
+                   (funcall function)))
+              ((listp sequence)
+               (when from-end
+                 (let* ((output nil))
+                   (do-sublist (elt sequence start end)
+                     (setf output (cons elt output)))
+                   (setf sequence output
+                         end (- end start) start 0)))
+               (while (plusp start)
+                 (setf sequence (cdr (the cons sequence))
+                       start (1- start)
+                       end (1- end)))
+               (unless ivsp
+                 (setf initial-value (key (car (the cons sequence)))
+                       sequence (cdr (the cons sequence))
+                       end (1- end)))
+               (do-sublist (elt sequence 0 end :output initial-value)
+                 (setf initial-value
+                       (if from-end
+                           (funcall function (key elt) initial-value)
+                           (funcall function initial-value (key elt))))))
+              (from-end
+               (unless ivsp
+                 (setf initial-value (key (aref sequence (1- end)))
+                       end (1- end)))
+               (do-vector(elt sequence start end :from-end t
+                              :output initial-value)
+                 (setf initial-value
+                       (funcall function (key elt) initial-value))))
+              (t
+               (unless ivsp
+                 (setf initial-value (key (aref sequence start))
+                       start (1+ start)))
+               (do-vector(elt sequence start end :output initial-value)
+                 (setf initial-value
+                       (funcall function initial-value (key elt))))
+                 ))))))
 
 (defun fill (sequence item &key (start 0) end)
   ;; INV: WITH-START-END checks the sequence type and size.
-  (with-start-end start end sequence
+  (reckless
+   (with-start-end (start end sequence)
      (if (listp sequence)
          (do* ((x (nthcdr start sequence) (cdr x))
                (i (- end start) (1- i)))
@@ -130,279 +121,382 @@
                sequence)
            (declare (fixnum i) (cons x))
            (setf (first x) item))
-         (si::fill-array-with-elt sequence item start end))))
+         (si::fill-array-with-elt sequence item start end)))))
 
 (defun replace (sequence1 sequence2 &key (start1 0) end1 (start2 0) end2)
-  (with-start-end start1 end1 sequence1
-   (with-start-end start2 end2 sequence2		  
-    (if (and (eq sequence1 sequence2)
-             (> start1 start2))
-        (do* ((i 0 (1+ i))
-              (l (if (< (the fixnum (- end1 start1))
-			(the fixnum (- end2 start2)))
-                      (- end1 start1)
-                      (- end2 start2)))
-              (s1 (+ start1 (the fixnum (1- l))) (the fixnum (1- s1)))
-              (s2 (+ start2 (the fixnum (1- l))) (the fixnum (1- s2))))
-            ((>= i l) sequence1)
-          (declare (fixnum i l s1 s2))
-          (setf (elt sequence1 s1) (elt sequence2 s2)))
-        (do ((i 0 (1+ i))
-             (l (if (< (the fixnum (- end1 start1))
-		       (the fixnum (- end2 start2)))
-                    (- end1 start1)
-                    (- end2 start2)))
-             (s1 start1 (1+ s1))
-             (s2 start2 (1+ s2)))
-            ((>= i l) sequence1)
-          (declare (fixnum i l s1 s2))
-          (setf (elt sequence1 s1) (elt sequence2 s2)))))))
+  (with-start-end (start1 end1 sequence1)
+   (with-start-end (start2 end2 sequence2)
+     (declare (optimize (speed 3) (safety 0) (debug 0)))
+     (let ((length (min (- end2 start2) (- end1 start1))))
+       (declare (fixnum length))
+       ;; If the two sequences are arrays, we can use COPY-SUBARRAY.
+       ;; Otherwise we have our own loop, which relies on sequence
+       ;; iterators. It becomes inefficient when sequences overlap
+       ;; because it has to save the data.
+       (if (and (vectorp sequence1)
+                (vectorp sequence2))
+           (copy-subarray sequence1 start1 sequence2 start2 length)
+           (do* ((data (if (and (eq sequence1 sequence2)
+                                (> start1 start2))
+                           (subseq sequence2 start2 end2)
+                           sequence2))
+                 (it2 (make-seq-iterator data start2)
+                      (seq-iterator-next data it2))
+                 (it1 (make-seq-iterator sequence1 start1)
+                      (seq-iterator-next sequence1 it1)))
+                ((or (<= length 0) (null it1) (null it2)))
+             (seq-iterator-set sequence1 it1
+                               (seq-iterator-ref sequence2 it2))
+             (decf length))))))
+  sequence1)
 
+(defun filter-vector (which out in start end from-end count
+                      test test-not key)
+  (with-tests (test test-not key)
+    (declare (optimize (speed 3) (safety 0) (debug 0)))
+    (with-start-end (start end in l)
+      (with-count (%count count :output in)
+	(let* ((existing 0))
+          (declare (fixnum existing))
+          ;; If the OUT is empty that means we REMOVE and we have to
+          ;; create the destination array. For that we first count how
+          ;; many elements are deletable and allocate the
+          ;; corresponding amount of space.
+          (unless (eq out in)
+            (setf existing (count which in :start start :end end
+                                   :test test :test-not test-not :key key))
+            (when (zerop existing)
+              (return-from filter-vector
+                (values in l)))
+            (setf out (make-array (- l (min existing %count))
+                                  :element-type
+                                  (array-element-type in))))
+          ;; We begin by copying the elements in [0, start)
+          (unless (eq out in)
+            (copy-subarray out 0 in 0 start))
+          ;; ... skip the elements in [start, end) which either
+          ;; do not need to be filtered (because of :from-end)
+          ;; or do not satisfy the test, 
+          (let ((skip 0))
+            (declare (fixnum skip))
+            (when from-end
+              (unless (plusp existing)
+                (setf existing (count which in :start start :end end
+                                      :test test :test-not test-not
+                                      :key key)))
+              (setf skip (if (< existing %count) 0 (- existing %count))))
+            (if (eq out in)
+                (do-vector (elt in start end :index index)
+                  (when (and (compare which (key elt))
+                             (minusp (decf skip)))
+                    (return))
+                  (incf start))
+                (do-vector (elt in start end :index index)
+                  (when (and (compare which (key elt))
+                             (minusp (decf skip)))
+                    (return))
+                  (setf (aref (the vector out) start) elt
+                        start (1+ start)))))
+          ;; ... now filter the rest
+          (do-vector (elt in start end :index index)
+            (if (compare which (key elt))
+                (when (zerop (decf %count))
+                  (setf end (1+ index))
+                  (return))
+                (setf (aref (the vector out) start) elt
+                      start (1+ start))))
+          ;; ... and copy the elements outside the limits
+          (copy-subarray out start in end l)
+          (values out (+ start (- l end))))))))
 
-;;; DEFSEQ macro.
-;;; Usage:
-;;;
-;;;    (DEFSEQ function-name argument-list countp everywherep variantsp body)
-;;;
-;;; The arguments ITEM and SEQUENCE (PREDICATE and SEQUENCE)
-;;;  and the keyword arguments are automatically supplied.
-;;; If the function has the :COUNT argument, set COUNTP T.
-;;; If VARIANTSP is NIL, the variants -IF and -IF-NOT are not generated. 
+(defun remove-list (which sequence start end count test test-not key)
+  (with-tests (test test-not key)
+    (declare (optimize (speed 3) (safety 0) (debug 0)))
+    (with-start-end (start end sequence)
+      (with-count (%count count :output sequence)
+	(let* ((output nil)
+	       (index 0))
+	  (declare (fixnum index))
+	  (while (and sequence (< index start))
+	    (setf output (cons (car (the cons sequence)) output)
+		  sequence (cdr (the cons sequence))
+		  index (1+ index)))
+          (loop
+             (unless (< index end) (return))
+             (let ((elt (car (the cons sequence))))
+               (setf sequence (cdr (the cons sequence)))
+               (if (compare which (key elt))
+                   (when (zerop (decf %count))
+                     (return))
+                   (push elt output))
+               (incf index)))
+	  (nreconc output sequence))))))
 
-(eval-when (eval compile)
+(defun remove (which sequence &key test test-not (start 0) end
+               from-end count key)
+  (declare (optimize (speed 3) (safety 1) (debug 0)))
+  (if (listp sequence)
+      (if from-end
+          (let ((l (length sequence)))
+            (nreverse (delete which (reverse sequence)
+                              :start (if end (- l end) 0) :end (- l start)
+                              :from-end nil
+                              :test test :test-not test-not :key key
+                              :count count)))
+          (remove-list which sequence start end count test test-not key))
+      (values (filter-vector which nil sequence start end from-end count
+                             test test-not key))))
 
-(defmacro defseq (f args countp everywherep variantsp normal-form &optional from-end-form)
-  `(macrolet
-      ((do-defseq (f args countp everywherep)
-	 (let* (from-end-form
-		normal-form
-                (last-index (gensym "LAST-INDEX"))
-                (ith-cons (gensym "ITH-CONS"))
-		(i-in-range '(and (<= start i) (< i end)))
-		(x `(cond
-                      ((not ,ith-cons) (elt sequence i))
-                      ((<= ,last-index i)
-                       (setf ,ith-cons (nthcdr (- i ,last-index) ,ith-cons)
-                             ,last-index i)
-                       (car ,ith-cons))
-                      (t (car (setf ,last-index i 
-                                    ,ith-cons (nthcdr i sequence))))))
-		(keyx `(key ,x))
-		(satisfies-the-test `(compare item ,keyx))
-		(number-satisfied
-		 `(n (internal-count item sequence
-		      :from-end from-end
-		      :test test :test-not test-not
-		      :start start :end end
-		      ,@(if countp '(:count count))
-		      :key key)))
-		(within-count '(< k count))
-		(kount-0 '(k 0))
-		(kount-up '(setq k (1+  k))))
-	   (let* ((iterate-i '(i start (1+ i)))
-		  (endp-i '(>= i end))
-		  (iterate-i-everywhere '(i 0 (1+ i)))
-		  (endp-i-everywhere '(>= i l)))
-	     (setq normal-form ,normal-form))
-	   (let* ((iterate-i '(i (1- end) (1- i)))
-		  (endp-i '(< i start))
-		  (iterate-i-everywhere '(i (1- l) (1- i)))
-		  (endp-i-everywhere '(< i 0)))
-	     (setq from-end-form ,(or from-end-form normal-form)))
-           `(defun ,f (,@args item sequence
-                       &key test test-not
-		       from-end (start 0) end
-		       key
-		       ,@(if countp '(count))
-                       ,@(if everywherep
-                             (list '&aux '(l (length sequence)))
-                             nil))
-	     ,@(if everywherep '((declare (fixnum l))))
-	     (with-tests (test test-not key)
-	       (with-start-end start end sequence
-			     ;; FIXME! We use that no object have more than
-			     ;; MOST-POSITIVE-FIXNUM elements.
-                               (let ((,ith-cons (and (consp sequence) sequence))
-                                     (,last-index 0)
-                                     ,@(and countp
-                                            '((count (cond ((null count)
-                                                            most-positive-fixnum)
-                                                           ((minusp count)
-                                                            0)
-                                                           ((> count most-positive-fixnum)
-                                                            most-positive-fixnum)
-                                                           (t count))))))
-                                  (declare (fixnum ,last-index
-                                                   ,@(and countp '(count))))
-				  nil
-				  (if from-end ,from-end-form ,normal-form))))))))
-    (do-defseq ,f ,args ,countp ,everywherep)
-    ,@(if variantsp
-	   `((defun ,(intern (si:base-string-concatenate (string f) "-IF")
-			     (symbol-package f))
-		 (,@args predicate sequence
-			 &key from-end
-			 (start 0) end
-			 key
-			 ,@(if countp '(count)))
-	       (,f ,@args (si::coerce-to-function predicate) sequence
-		   :from-end from-end
-		   :test #'unsafe-funcall1
-		   :start start :end end
-		   ,@(if countp '(:count count))
-		   :key key))
-	     (defun ,(intern (si:base-string-concatenate (string f) "-IF-NOT")
-			     (symbol-package f))
-		 (,@args predicate sequence
-			 &key from-end (start 0) end
-			 key ,@(if countp '(count)))
-	       (,f ,@args (si::coerce-to-function predicate) sequence
-		   :from-end from-end
-		   :test-not #'unsafe-funcall1
-		   :start start :end end
-		   ,@(if countp '(:count count))
-		   :key key))
-	     ',f)
-	   `(',f)))))
-; eval-when
+(defun remove-if (predicate sequence &key (start 0) end from-end count key)
+  (remove (si::coerce-to-function predicate) sequence
+	  :start start :end end :from-end from-end :count count
+	  :test #'unsafe-funcall1 :key key))
 
+(defun remove-if-not (predicate sequence &key (start 0) end from-end count key)
+  (remove (si::coerce-to-function predicate) sequence
+	  :start start :end end :from-end from-end :count count
+	  :test-not #'unsafe-funcall1 :key key))
 
-(defseq remove () t nil t
-      ;; Ordinary run
-      `(if (listp sequence)
-           (let* ((l sequence) (l1 nil))
-             (do ((i 0 (1+ i)))
-                 ((>= i start))
-               (declare (fixnum i))
-               (push (car l) l1)
-               (pop l))
-             (do ((i start (1+ i)) (j 0))
-                 ((or (>= i end) (>= j count) (endp l))
-                  (nreconc l1 l))
-               (declare (fixnum i j))
-               (if (compare item (key (car l)))
-		   (incf j)
-		   (push (car l) l1))
-	       (pop l)))
-           (delete item sequence
-                   :from-end from-end
-                   :test test :test-not test-not
-                   :start start :end end
-                   :count count
-                   :key key))
-      ;; From end run
-      `(delete item sequence
-               :from-end from-end
-               :test test :test-not test-not
-               :start start :end end
-               :count count
+(defun delete-list (which sequence start end count test test-not key)
+  (with-tests (test test-not key)
+    (declare (optimize (speed 3) (safety 0) (debug 0)))
+    (with-start-end (start end sequence)
+      (with-count (%count count :output sequence)
+	(let* ((splice (cons nil sequence))
+               (output splice)
+	       (index 0))
+	  (declare (fixnum index)
+                   (cons splice))
+	  (while (and sequence (< index start))
+	    (setf sequence (cdr (the cons sequence))
+		  splice (cdr (the cons splice))
+		  index (1+ index)))
+          (loop
+             (unless (< index end)
+               (return))
+             (let ((elt (car (the cons sequence))))
+               (setf sequence (cdr (the cons sequence)))
+               (cond ((compare which (key elt))
+                      (setf (cdr splice) sequence)
+                      (when (zerop (decf %count))
+                        (return)))
+                     (t
+                      (setf splice (cdr splice))))
+               (incf index)))
+          (cdr output))))))
+
+(defun delete (which sequence &key test test-not (start 0) end
+               from-end count key)
+  (declare (optimize (speed 3) (safety 1) (debug 0))
+           (ext:no-check-arguments-type))
+  (cond ((listp sequence)
+         (if from-end
+             (let ((l (length sequence)))
+               (nreverse
+                (delete-list which (nreverse sequence)
+                             (if end (- l end) 0) (- l start)
+                             count test test-not key)))
+             (delete-list which sequence start end count test test-not key)))
+        ((not (vectorp sequence))
+         (signal-type-error sequence 'sequence))
+        ((array-has-fill-pointer-p (the vector sequence))
+         (multiple-value-bind (sequence l)
+             (filter-vector which sequence sequence start end from-end count
+                            test test-not key)
+           (setf (fill-pointer (the vector sequence)) l)
+           sequence))
+        (t
+         (values (filter-vector which nil sequence start end from-end count
+                                test test-not key)))))
+
+(defun delete-if (predicate sequence &key (start 0) end from-end count key)
+  (delete (si::coerce-to-function predicate) sequence
+	  :start start :end end :from-end from-end :count count
+	  :test #'unsafe-funcall1 :key key))
+
+(defun delete-if-not (predicate sequence &key (start 0) end
+                      from-end count key)
+  (delete (si::coerce-to-function predicate) sequence
+	  :start start :end end :from-end from-end :count count
+	  :test-not #'unsafe-funcall1 :key key))
+
+(defun count (item sequence &key test test-not from-end (start 0) end key)
+  (with-tests (test test-not key)
+    (declare (optimize (speed 3) (safety 0) (debug 0)))
+    (with-start-end (start end sequence l)
+      (let ((counter 0))
+	(declare (fixnum counter))
+	(if from-end
+	    (if (listp sequence)
+                (count item (reverse sequence)
+                       :start (- l end) :end (- l start)
+                       :test test :test-not test-not :key key)
+		(do-vector (elt sequence start end :from-end t
+                                :output counter)
+		  (when (compare item (key elt))
+		    (incf counter))))
+	    (do-sequence (elt sequence start end :specialize t
+                              :output counter)
+	      (when (compare item (key elt))
+		(incf counter))))))))
+
+(defun count-if (predicate sequence &key from-end (start 0) end key)
+  (count (si::coerce-to-function predicate) sequence
+	 :from-end from-end :start start :end end
+	 :test #'unsafe-funcall1 :key key))
+
+(defun count-if-not (predicate sequence &key from-end (start 0) end key)
+  (count (si::coerce-to-function predicate)
+	 sequence :from-end from-end :start start :end end
+	 :test-not #'unsafe-funcall1 :key key))
+
+(defun substitute (new old sequence &key test test-not (start 0) end
+                   from-end count key)
+  (nsubstitute new old (copy-seq sequence) :start start :end end :from-end from-end
+	       :count count :key key :test test :test-not test-not))
+
+(defun substitute-if (new predicate sequence
+		      &key (start 0) end from-end count key)
+  (nsubstitute new (si::coerce-to-function predicate) (copy-seq sequence)
+	       :key key :test #'unsafe-funcall1
+               :start start :end end :from-end from-end :count count
+               :key key))
+
+(defun substitute-if-not (new predicate sequence
+			  &key (start 0) end from-end count key)
+  (nsubstitute new (si::coerce-to-function predicate) (copy-seq sequence)
+	       :key key :test-not #'unsafe-funcall1
+               :start start :end end :from-end from-end :count count
+               :key key))
+
+(defun nsubstitute (new old sequence &key test test-not (start 0) end
+                    from-end count key)
+  (with-tests (test test-not key)
+    (declare (optimize (speed 3) (safety 0) (debug 0)))
+    (with-start-end (start end sequence l)
+      (with-count (%count count :output sequence)
+	;; FIXME! This could be simplified to (AND FROM-END COUNT)
+	;; but the ANSI test suite complains because it expects always
+	;; a from-end inspection order!
+        (if from-end
+            (if (listp sequence)
+                (nreverse
+                 (nsubstitute new old (nreverse sequence)
+                              :start (- l end) :end (- l start)
+                              :key key :test test :test-not test-not
+                              :count count))
+                (do-vector (elt sequence start end :setter elt-set
+                                :from-end t :output sequence)
+                  (when (compare old (key elt))
+                    (elt-set new)
+                    (when (zerop (decf %count))
+                      (return sequence)))))
+            (do-sequence (elt sequence start end :setter elt-set
+                              :output sequence :specialize t)
+              (when (compare old (key elt))
+                (elt-set new)
+                (when (zerop (decf %count))
+                  (return sequence)))))))))
+
+(defun nsubstitute-if (new predicate sequence
+                       &key (start 0) end from-end count key)
+  (nsubstitute new (si::coerce-to-function predicate) sequence
+	       :key key :test #'unsafe-funcall1
+               :start start :end end :from-end from-end :count count
+               :key key))
+
+(defun nsubstitute-if-not (new predicate sequence
+                           &key (start 0) end from-end count key)
+  (nsubstitute new (si::coerce-to-function predicate) sequence
+	       :key key :test-not #'unsafe-funcall1
+               :start start :end end :from-end from-end :count count
                :key key))
 
 
-(defseq delete () t t t
-      ;; Ordinary run
-      `(if (listp sequence)
-           (let* ((l0 (cons nil sequence)) (l l0))
-             (do ((i 0 (1+ i)))
-                 ((>= i start))
-               (declare (fixnum i))
-               (pop l))
-             (do ((i start (1+ i)) (j 0))
-                 ((or (>= i end) (>= j count) (endp (cdr l))) (cdr l0))
-               (declare (fixnum i j))
-               (cond ((compare item (key (cadr l)))
-                      (incf j)
-                      (rplacd l (cddr l)))
-                     (t (setq l (cdr l))))))
-           (let (,number-satisfied)
-             (declare (fixnum n))
-             (when (< n count) (setq count n))
-             (do ((newseq
-                   (make-sequence (seqtype sequence)
-                                  (the fixnum (- l count))))
-                  ,iterate-i-everywhere
-                  (j 0)
-                  ,kount-0)
-                 (,endp-i-everywhere newseq)
-               (declare (fixnum i j k))
-               (cond ((and ,i-in-range ,within-count ,satisfies-the-test)
-                      ,kount-up)
-                     (t (setf (elt newseq j) ,x)
-                        (incf j))))))
-      ;; From end run
-      `(let (,number-satisfied)
-         (declare (fixnum n))
-         (when (< n count) (setq count n))
-         (do ((newseq
-               (make-sequence (seqtype sequence) (the fixnum (- l count))))
-              ,iterate-i-everywhere
-              (j (- (the fixnum (1- l)) n))
-              ,kount-0)
-             (,endp-i-everywhere newseq)
-           (declare (fixnum i j k))
-           (cond ((and ,i-in-range ,within-count ,satisfies-the-test)
-                  ,kount-up)
-                 (t (setf (elt newseq j) ,x)
-                    (decf j))))))
+(defun find (item sequence &key test test-not (start 0) end from-end key)
+  (with-tests (test test-not key)
+    (declare (optimize (speed 3) (safety 0) (debug 0)))
+    (with-start-end (start end sequence l)
+      (let ((output nil))
+        (do-sequence (elt sequence start end
+                          :output output :index index :specialize t)
+          (when (compare item (key elt))
+            (unless from-end
+              (return elt))
+            (setf output elt)))))))
 
-(defseq count () nil nil t
-  ;; Both runs
-  `(do (,iterate-i ,kount-0)
-       (,endp-i k)
-     (declare (fixnum i k))
-     (when (and ,satisfies-the-test)
-           ,kount-up)))
+(defun find-if (predicate sequence &key from-end (start 0) end key)
+  (find (si::coerce-to-function predicate) sequence
+	:from-end from-end :start start :end end
+	:test #'unsafe-funcall1 :key key))
+
+(defun find-if-not (predicate sequence &key from-end (start 0) end key)
+  (find (si::coerce-to-function predicate) sequence
+	:from-end from-end :start start :end end
+	:test-not #'unsafe-funcall1 :key key))
 
 
-(defseq internal-count () t nil nil
-  ;; Both runs
-  `(do (,iterate-i ,kount-0)
-       (,endp-i k)
-     (declare (fixnum i k))
-     (when (and ,within-count ,satisfies-the-test)
-           ,kount-up)))
+(defun position (item sequence &key test test-not from-end (start 0) end key)
+  (with-tests (test test-not key)
+    (declare (optimize (speed 3) (safety 0) (debug 0)))
+    (with-start-end (start end sequence)
+      (let ((output nil))
+        (do-sequence (elt sequence start end
+                      :output output :index index :specialize t)
+          (when (compare item (key elt))
+            (unless from-end
+              (return index))
+            (setf output index)))))))
 
+(defun position-if (predicate sequence &key from-end (start 0) end key)
+  (position (si::coerce-to-function predicate) sequence
+            :from-end from-end :start start :end end
+            :test #'unsafe-funcall1 :key key))
 
-(defseq substitute (newitem) t t t
-  ;; Both runs
-  `(do ((newseq (make-sequence (seqtype sequence) l))
-        ,iterate-i-everywhere
-        ,kount-0)
-       (,endp-i-everywhere newseq)
-     (declare (fixnum i k))
-     (cond ((and ,i-in-range ,within-count ,satisfies-the-test)
-            (setf (elt newseq i) newitem)
-            ,kount-up)
-           (t (setf (elt newseq i) ,x)))))
+(defun position-if-not (predicate sequence &key from-end (start 0) end key)
+  (position (si::coerce-to-function predicate) sequence
+            :from-end from-end :start start :end end
+            :test-not #'unsafe-funcall1 :key key))
 
-
-(defseq nsubstitute (newitem) t nil t
-  ;; Both runs
-  `(do (,iterate-i ,kount-0)
-       (,endp-i sequence)
-     (declare (fixnum i k))
-     (when (and ,within-count ,satisfies-the-test)
-       (if ,ith-cons
-           (setf (car ,ith-cons) newitem)
-           (setf (elt sequence i) newitem))
-       ,kount-up)))
-
-
-(defseq find () nil nil t
-  ;; Both runs
-  `(do (,iterate-i)
-       (,endp-i nil)
-     (declare (fixnum i))
-     (when ,satisfies-the-test (return ,x))))
-
-
-(defseq position () nil nil t
-  ;; Both runs
-  `(do (,iterate-i)
-       (,endp-i nil)
-     (declare (fixnum i))
-     (when ,satisfies-the-test (return i))))
-
+(defun remove-duplicates-list (sequence start end from-end test test-not key)
+  (with-tests (test test-not key)
+    (declare (optimize (speed 3) (safety 0) (debug 0) (space 0)))
+    (with-start-end (start end sequence)
+      (let* ((output nil))
+        (while (and sequence (plusp start))
+          (setf output (cons (car (the cons sequence)) output)
+                sequence (cdr (the cons sequence))
+                start (1- start)
+                end (1- end)))
+        (let ((start sequence)
+              (end (nthcdr (- end start) sequence)))
+          ;; When from-end, keep the first occurrence of each duplicate
+          ;; element; otherwise we keep the last one. Hence, A-I-L-P
+          ;; 1) if from-end, return T only when there are no duplicates
+          ;;    before current;
+          ;; 2) otherwise, return T only when there are no duplicates
+          ;;    after the current one.
+          (flet ((already-in-list-p (start current end from-end)
+                   (let ((elt (key (car (the cons current)))))
+                     (if from-end
+                         (loop
+                            (when (eq start current)
+                              (return nil))
+                            (when (compare elt (key (car (the cons start))))
+                              (return t))
+                            (setf start (cdr (the cons start))))
+                         (loop
+                            (setf current (cdr (the cons current)))
+                            (when (eq current end)
+                              (return nil))
+                            (when (compare elt (key (car (the cons current))))
+                              (return t)))))))
+            (loop
+               (when (eq sequence end)
+                 (return (nreconc output sequence)))
+               (unless (already-in-list-p start sequence end from-end)
+                 (push (car (the cons sequence)) output))
+               (setf sequence (cdr (the cons sequence))))))))))
 
 (defun remove-duplicates (sequence
                           &key test test-not from-end (start 0) end key)
@@ -410,104 +504,118 @@
        &key key (test '#'eql) test-not
             (start 0) (end (length sequence)) (from-end nil))
 Returns a copy of SEQUENCE without duplicated elements."
-  (and test test-not (test-error))
-  (when (and (listp sequence) (not from-end) (zerop start) (null end))
-        (when (endp sequence) (return-from remove-duplicates nil))
-        (do ((l sequence (cdr l)) (l1 nil))
-            ((endp (cdr l))
-             (return-from remove-duplicates (nreconc l1 l)))
-          (unless (member1 (car l) (cdr l) test test-not key)
-                  (setq l1 (cons (car l) l1)))))
-  (delete-duplicates sequence
-                     :from-end from-end
-                     :test test :test-not test-not
-                     :start start :end end
-                     :key key))
-       
+  (cond ((listp sequence)
+         (remove-duplicates-list sequence start
+                                 end from-end test test-not key))
+        ((vectorp sequence)
+         (let* ((l (filter-duplicates-vector nil sequence
+                                             start end from-end
+                                             test test-not key))
+                (v (make-array l :element-type
+                               (array-element-type sequence))))
+           (filter-duplicates-vector v sequence
+                                     start end from-end
+                                     test test-not key)
+           v))
+        ((not (vectorp sequence))
+         (signal-type-error sequence 'sequence))))
+
+(defun delete-duplicates-list (sequence start end from-end test test-not key)
+  (with-tests (test test-not key)
+    (declare (optimize (speed 3) (safety 0) (debug 0) (space 0)))
+    (with-start-end (start end sequence)
+      (let* ((splice (cons nil sequence))
+             (output splice))
+        (while (and sequence (plusp start))
+          (setf splice (cdr (the cons splice))
+                sequence (cdr (the cons sequence))
+                start (1- start)
+                end (1- end)))
+        (let ((start splice)
+              (end (nthcdr (- end start) sequence)))
+          (flet ((already-in-list-p (start current end from-end)
+                   (let ((elt (key (car (the cons current)))))
+                     (if from-end
+                         (loop
+                            (when (eq start current)
+                              (return nil))
+                            (when (compare elt (key (car (the cons start))))
+                              (return t))
+                            (setf start (cdr (the cons start))))
+                         (loop
+                            (setf current (cdr (the cons current)))
+                            (when (eq current end)
+                              (return nil))
+                            (when (compare elt (key (car (the cons current))))
+                              (return t)))))))
+            (loop
+               (when (eq sequence end)
+                 (return (cdr (the cons output))))
+               (if (already-in-list-p (cdr (the cons start))
+                                      sequence end from-end)
+                   (setf sequence (cdr (the cons sequence))
+                         (cdr splice) sequence)
+                   (setf sequence (cdr (the cons sequence))
+                         splice (cdr (the cons splice)))))))))))
+
+(defun filter-duplicates-vector (out in start end from-end test test-not key)
+  (with-tests (test test-not key)
+    (declare (optimize (speed 3) (safety 0) (debug 0) (space 0)))
+    (with-start-end (start end in length)
+      (when (and out (not (eq out in)))
+        (copy-subarray out 0 in 0 start))
+      (flet ((already-in-vector-p (sequence start current end from-end)
+               (declare (vector sequence)
+                        (fixnum start current end))
+               (if from-end
+                   (setf end current)
+                   (setf start (1+ current)))
+               (let ((base (key (aref sequence current))))
+                 (do-vector (elt sequence start end :output nil)
+                   (when (compare base (key elt))
+                     (return t))))))
+        (let ((index start)
+              (jndex start))
+          (declare (fixnum index jndex))
+        (loop
+           (when (= index end)
+             (return (progn
+                       (when out (copy-subarray out jndex in end length))
+                       (+ jndex (- length end)))))
+           (unless (already-in-vector-p in start index end from-end)
+             (when out
+               (setf (aref (the vector out) jndex)
+                     (aref (the vector in) index)))
+             (setf jndex (1+ jndex)))
+           (setf index (1+ index))))))))
 
 (defun delete-duplicates (sequence
-			  &key test test-not from-end (start 0) end key
-                          &aux (l (length sequence)))
+			  &key test test-not from-end (start 0) end key)
   "Args: (sequence &key key
 		     (test '#'eql) test-not
                      (start 0) (end (length sequence)) (from-end nil))
 Destructive REMOVE-DUPLICATES.  SEQUENCE may be destroyed."
-  (declare (fixnum l))
-  (with-tests (test test-not key)
-    (when (and (listp sequence) (not from-end) (zerop start) (null end))
-      (when (endp sequence) (return-from delete-duplicates nil))
-      (do ((l sequence))
-	  ((endp (cdr l))
-	   (return-from delete-duplicates sequence))
-	(cond ((member1 (car l) (cdr l) test test-not key)
-	       (rplaca l (cadr l))
-	       (rplacd l (cddr l)))
-	      (t (setq l (cdr l))))))
-    (with-start-end start end sequence
-      (if (not from-end)
-	  (do ((n 0)
-	       (i start (1+ i)))
-	      ((>= i end)
-	       (do ((newseq (make-sequence (seqtype sequence)
-					   (the fixnum (- l n))))
-		    (i 0 (1+ i))
-		    (j 0))
-		   ((>= i l) newseq)
-		 (declare (fixnum i j))
-		 (cond ((and (<= start i)
-			     (< i end)
-			     (position (key (elt sequence i))
-				       sequence
-				       :test test
-				       :test-not test-not
-				       :start (the fixnum (1+ i))
-				       :end end
-				       :key key)))
-		       (t
-			(setf (elt newseq j) (elt sequence i))
-			(incf j)))))
-	    (declare (fixnum n i))
-	    (when (position (key (elt sequence i))
-			    sequence
-			    :test test
-			    :test-not test-not
-			    :start (the fixnum (1+ i))
-			    :end end
-			    :key key)
-	      (incf n)))
-	  (do ((n 0)
-	       (i (1- end) (1- i)))
-	      ((< i start)
-	       (do ((newseq (make-sequence (seqtype sequence)
-					   (the fixnum (- l n))))
-		    (i (1- l) (1- i))
-		    (j (- (the fixnum (1- l)) n)))
-		   ((< i 0) newseq)
-		 (declare (fixnum i j))
-		 (cond ((and (<= start i)
-			     (< i end)
-			     (position (key (elt sequence i))
-				       sequence
-				       :from-end t
-				       :test test
-				       :test-not test-not
-				       :start start
-				       :end i
-				       :key key)))
-		       (t
-			(setf (elt newseq j) (elt sequence i))
-			(decf j)))))
-	    (declare (fixnum n i))
-	    (when (position (key (elt sequence i))
-			    sequence
-			    :from-end t
-			    :test test
-			    :test-not test-not
-			    :start start
-			    :end i
-			    :key key)
-	      (incf n)))))))
-       
+  (cond ((listp sequence)
+         (delete-duplicates-list sequence start end from-end
+                                 test test-not key))
+        ((not (vectorp sequence))
+         (signal-type-error sequence 'sequence))
+        ((array-has-fill-pointer-p sequence)
+         (let ((l (filter-duplicates-vector sequence sequence
+                                            start end from-end
+                                            test test-not key)))
+           (setf (fill-pointer sequence) l)
+           sequence))
+        (t
+         (let* ((l (filter-duplicates-vector nil sequence
+                                             start end from-end
+                                             test test-not key))
+                (v (make-array l :element-type
+                               (array-element-type sequence))))
+           (filter-duplicates-vector v sequence
+                                     start end from-end
+                                     test test-not key)
+           v))))       
 
 (defun mismatch (sequence1 sequence2
 		 &key from-end test test-not key
@@ -522,9 +630,8 @@ Compares element-wise the specified subsequences of SEQUENCE1 and SEQUENCE2.
 Returns NIL if they are of the same length and they have the same elements in
 the sense of TEST.  Otherwise, returns the index of SEQUENCE1 to the first
 element that does not match."
-  (and test test-not (test-error))
-  (with-start-end start1 end1 sequence1
-   (with-start-end start2 end2 sequence2
+  (with-start-end (start1 end1 sequence1)
+   (with-start-end (start2 end2 sequence2)
     (with-tests (test test-not key)
       (if (not from-end)
 	  (do ((i1 start1 (1+ i1))
@@ -557,31 +664,95 @@ element that does not match."
 Searches SEQUENCE2 for a subsequence that element-wise matches SEQUENCE1.
 Returns the index to the first element of the subsequence if such a
 subsequence is found.  Returns NIL otherwise."
-  (and test test-not (test-error))
-  (with-start-end start1 end1 sequence1
-   (with-start-end start2 end2 sequence2  
-    (with-tests (test test-not key)
-      (if (not from-end)
-	  (loop
-	     (do ((i1 start1 (1+ i1))
-		  (i2 start2 (1+ i2)))
-		 ((>= i1 end1) (return-from search start2))
-	       (declare (fixnum i1 i2))
-	       (when (>= i2 end2) (return-from search nil))
-	       (unless (compare (key (elt sequence1 i1))
-				(key (elt sequence2 i2)))
-		 (return nil)))
-	     (incf start2))
-	  (loop
-	     (do ((i1 (1- end1) (1- i1))
-		  (i2 (1- end2) (1- i2)))
-		 ((< i1 start1) (return-from search (the fixnum (1+ i2))))
-	       (declare (fixnum i1 i2))
-	       (when (< i2 start2) (return-from search nil))
-	       (unless (compare (key (elt sequence1 i1))
-				(key (elt sequence2 i2)))
-		 (return nil)))
-	     (decf end2)))))))
+  #+(or)
+  (search-generic sequence1 start1 end1 sequence2 start2 end2
+                  test test-not key from-end)
+  (if (and (vectorp sequence1) (vectorp sequence2))
+      (search-vector sequence1 start1 end1 sequence2 start2 end2
+                     test test-not key from-end)
+      (search-generic sequence1 start1 end1 sequence2 start2 end2
+                      test test-not key from-end)))
+
+(defun search-vector (sequence1 start1 end1 sequence2 start2 end2
+                      test test-not key from-end)
+  (declare (si::c-local)
+           (optimize (speed 3) (safety 0) (debug 0) (space 0))
+           (vector sequence1 sequence2))
+  (with-tests (test test-not key)
+    (with-start-end (start1 end1 sequence1)
+      (with-start-end (start2 end2 sequence2)
+        (do* ((last-index -1)
+              (last (let* ((l (- end1 start1))
+                           (e (- end2 l)))
+                      (declare (fixnum l e))
+                      (unless (plusp l)
+                        (return-from search-vector
+                          (if from-end end2 0)))
+                      (1+ e)))
+              (start2 start2 (1+ start2))
+              (base (key (aref sequence1 start1))))
+             ((>= start2 last)
+              (if (minusp last-index) nil last-index))
+          (declare (fixnum start2 last-index))
+          (when (compare base (key (aref sequence2 start2)))
+            (let* ((i1 start1)
+                   (i2 start2))
+              (declare (fixnum i1 i2))
+              (loop
+                 (setf i1 (1+ i1)
+                       i2 (1+ i2))
+                 (when (or (>= i1 end1) (>= i2 end2))
+                   (when from-end
+                     (setf last-index start2)
+                     (return))
+                   (return-from search-vector start2))
+                 (unless (compare (key (aref sequence1 i1))
+                                  (key (aref sequence2 i2)))
+                   (return))))))))))
+
+(defun search-generic (sequence1 start1 end1 sequence2 start2 end2
+                       test test-not key from-end)
+  (declare (si::c-local)
+           (optimize (speed 3) (safety 2) (debug 0) (space 0)))
+  (with-tests (test test-not key)
+    (with-start-end (start1 end1 sequence1)
+      (with-start-end (start2 end2 sequence2)
+        (do* ((last-index -1)
+              (start2 start2 (1+ start2))
+              (last (let* ((l (- end1 start1))
+                           (e (- end2 l)))
+                      (declare (fixnum l e))
+                      (unless (plusp l)
+                        (return-from search-generic
+                          (if from-end end2 0)))
+                      (1+ e)))
+              (it1 (make-seq-iterator sequence1 start1))
+              (base (key (seq-iterator-ref sequence1 it1)))
+              (it2 (make-seq-iterator sequence2 start2)
+                   (seq-iterator-next sequence2 it2)))
+             ((or (null it2) (>= start2 last))
+              (if (minusp last-index) nil last-index))
+          (declare (fixnum start2 last-index last))
+          (when (compare base (key (seq-iterator-ref sequence2 it2)))
+            (let* ((it1 it1)
+                   (it2 it2)
+                   (i1 start1)
+                   (i2 start2))
+              (declare (fixnum i1 i2))
+              (loop
+                 (setf it1 (seq-iterator-next sequence1 it1)
+                       it2 (seq-iterator-next sequence2 it2)
+                       i1 (1+ i1)
+                       i2 (1+ i2))
+                 (when (or (>= i1 end1) (>= i2 end2)
+                           (null it1) (null it2))
+                   (when from-end
+                     (setf last-index start2)
+                     (return))
+                   (return-from search-generic start2))
+                 (unless (compare (key (seq-iterator-ref sequence1 it1))
+                                  (key (seq-iterator-ref sequence2 it2)))
+                   (return))))))))))
 
 
 (defun sort (sequence predicate &key key)
@@ -743,8 +914,3 @@ the sense of TEST."
 Returns a new function which first applies F to its arguments and then negates
 the output"
   #'(lambda (&rest x) (not (apply f x))))
-
-(defun constantly (n)
-  "Args: (n)
-Builds a new function which accepts any number of arguments but always outputs N."
-  #'(lambda (&rest x) (declare (ignore x)) n))

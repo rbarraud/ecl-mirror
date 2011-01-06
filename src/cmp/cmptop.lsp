@@ -16,7 +16,9 @@
 
 (defun t1expr (form)
   (let* ((*current-toplevel-form* nil)
-         (*cmp-env* (cmp-env-new)))
+         (*cmp-env* (if *cmp-env*
+                        (cmp-env-copy *cmp-env*)
+                        (cmp-env-root))))
     (push (t1expr* form) *top-level-forms*)))
 
 (defvar *toplevel-forms-to-print*
@@ -39,9 +41,9 @@
 	     (cmperr "~s is illegal function." fun))
 	    ((eq fun 'QUOTE)
 	     (t1ordinary 'NIL))
-	    ((setq fd (get-sysprop fun 'T1))
+	    ((setq fd (gethash fun *t1-dispatch-table*))
 	     (funcall fd args))
-	    ((or (get-sysprop fun 'C1) (get-sysprop fun 'C1SPECIAL))
+	    ((gethash fun *c1-dispatch-table*)
              (t1ordinary form))
 	    ((and (setq fd (compiler-macro-function fun))
 		  (inline-possible fun)
@@ -67,8 +69,17 @@
 
 (defun t2expr (form)
   (when form
-    (let ((def (get-sysprop (c1form-name form) 'T2)))
-      (when def (apply def (c1form-args form))))))
+    (let* ((def (gethash (c1form-name form) *t2-dispatch-table*)))
+      (if def
+          (let ((*compile-file-truename* (c1form-file form))
+                (*compile-file-position* (c1form-file-position form))
+                (*current-toplevel-form* (c1form-form form))
+                (*current-form* (c1form-form form))
+                (*current-c2form* form)
+                (*cmp-env* (c1form-env form)))
+            (apply def (c1form-args form)))
+          (cmperr "Unhandled T2FORM found at the toplevel:~%~4I~A"
+                  form)))))
 
 (defvar *emitted-local-funs* nil)
 
@@ -102,7 +113,7 @@
 
   ;(let ((*print-level* 3)) (pprint *top-level-forms*))
   (setq *top-level-forms* (nreverse *top-level-forms*))
-  (wt-nl1 "#include \"" (si::coerce-to-filename h-pathname) "\"")
+  (wt-nl1 "#include \"" (brief-namestring h-pathname) "\"")
 
   ;; VV might be needed by functions in CLINES.
   (wt-nl-h "#ifdef ECL_DYNAMIC_VV")
@@ -124,7 +135,7 @@
 	 (*emitted-local-funs* nil)
 	 (*compiler-declared-globals* (make-hash-table)))
     (unless shared-data
-      (wt-nl1 "#include \"" (si::coerce-to-filename data-pathname) "\""))
+      (wt-nl1 "#include \"" (brief-namestring data-pathname) "\""))
     (wt-nl1 "#ifdef __cplusplus")
     (wt-nl1 "extern \"C\"")
     (wt-nl1 "#endif")
@@ -171,7 +182,8 @@
     (when *do-type-propagation*
       (setq *compiler-phase* 'p1propagate)
       (dolist (form *top-level-forms*)
-        (p1propagate form nil))
+	(when form
+	  (p1propagate form nil)))
       (dolist (fun *local-funs*)
         (p1propagate (fun-lambda fun) nil)))
 
@@ -280,7 +292,7 @@
   (progv symbols values (c2expr body)))
 
 (defun t2progn (args)
-  (mapcar #'t2expr args))
+  (mapc #'t2expr args))
 
 (defun exported-fname (name)
   (let (cname)
@@ -291,6 +303,7 @@
 ;;; Mechanism for sharing code:
 ;;; FIXME! Revise this 'DEFUN stuff.
 (defun new-defun (new &optional no-entry)
+  #|
   (unless (fun-exported new)
     ;; Check whether this function is similar to a previous one and
     ;; share code with it.
@@ -303,58 +316,83 @@
 	      (fun-minarg new) (fun-minarg old)
 	      (fun-maxarg new) (fun-maxarg old))
 	(return))))
+  |#
   (push new *global-funs*))
 
 (defun print-function (x)
   (format t "~%<a FUN: ~A, CLOSURE: ~A, LEVEL: ~A, ENV: ~A>"
 	  (fun-name x) (fun-closure x) (fun-level x) (fun-env x)))
 
+(defmacro and! (&body body)
+  `(let ((l (list ,@body)))
+     (pprint (list* 'l? l))
+     (every #'identity l)))
+
+#|
 (defun similar (x y)
-  ;; FIXME! This could be more accurate
-  (labels ((similar-ref (x y)
-	     (and (equal (ref-ref-ccb x) (ref-ref-ccb y))
-		  (equal (ref-ref-clb x) (ref-ref-clb y))
-		  (equal (ref-ref x) (ref-ref y))))
-	   (similar-var (x y)
-	     (and (similar-ref x y)
-		  (equal (var-name x) (var-name y))
-		  (equal (var-kind x) (var-kind y))
-		  (equal (var-loc x) (var-loc y))
-		  (equal (var-type x) (var-type y))
-		  (equal (var-index x) (var-index y))))
-	   (similar-c1form (x y)
-	     (and (equal (c1form-name x) (c1form-name y))
-		  (similar (c1form-args x) (c1form-args y))
-		  (similar (c1form-local-vars x) (c1form-local-vars y))
-		  (eql (c1form-sp-change x) (c1form-sp-change y))
-		  (eql (c1form-volatile x) (c1form-volatile y))))
-	   (similar-fun (x y)
-	     (and (similar-ref x y)
-		  (eql (fun-global x) (fun-global y))
-		  (eql (fun-exported x) (fun-exported y))
-		  (eql (fun-closure x) (fun-closure y))
-		  (similar (fun-var x) (fun-var y))
-		  (similar (fun-lambda x) (fun-lambda y))
-		  (= (fun-level x) (fun-level y))
-		  (= (fun-env x) (fun-env y))
-		  (= (fun-minarg x) (fun-minarg y))
-		  (eql (fun-maxarg x) (fun-maxarg y))
-		  (similar (fun-local-vars x) (fun-local-vars y))
-		  (similar (fun-referred-vars x) (fun-referred-vars y))
-		  (similar (fun-referred-funs x) (fun-referred-funs y))
-		  (similar (fun-child-funs x) (fun-child-funs y)))))
-    (and (eql (type-of x) (type-of y))
-	 (typecase x
-	   (CONS (and (similar (car x) (car y))
-		      (similar (cdr x) (cdr y))))
-	   (VAR (similar-var x y))
-	   (FUN (similar-fun x y))
-	   (REF (similar-ref x y))
-	   (TAG NIL)
-	   (BLK NIL)
-	   (C1FORM (similar-c1form x y))
-	   (SEQUENCE (and (every #'similar x y)))
-	   (T (equal x y))))))
+  (let ((*processed* (make-hash-table :test #'equal)))
+    ;; FIXME! This could be more accurate
+    (labels ((similar (x y)
+               (when (eql x y)
+                 (return-from similar t))
+               (let ((pair (cons x y)))
+                 (case (gethash pair *processed* :not-found)
+                   ((nil) (return-from similar nil))
+                   ((t) (return-from similar t))
+                   ((:ongoing) (return-from similar t))
+                   ((:not-found)))
+                 (setf (gethash pair *processed*) :ongoing)
+                 (setf (gethash pair *processed*)
+                       (and (eql (type-of x) (type-of y))
+                            (typecase x
+                              (CONS (and (similar (car x) (car y))
+                                         (similar (cdr x) (cdr y))))
+                              (VAR (similar-var x y))
+                              (FUN (similar-fun x y))
+                              (REF (similar-ref x y))
+                              (TAG NIL)
+                              (BLK NIL)
+                              (C1FORM (similar-c1form x y))
+                              (SEQUENCE (and (every #'similar x y)))
+                              (T (equal x y)))))))
+             (similar-list (x y)
+               (null (set-difference x y)))
+             (similar-ref (x y)
+               (and (equal (ref-ref-ccb x) (ref-ref-ccb y))
+                    (equal (ref-ref-clb x) (ref-ref-clb y))
+                    (equal (ref-ref x) (ref-ref y))))
+             (similar-var (x y)
+               (print (list (var-loc x) (var-loc y)))
+               (and! (similar-ref x y)
+                    (equal (var-name x) (var-name y))
+                    (equal (var-kind x) (var-kind y))
+                    (equal (var-loc x) (var-loc y))
+                    (equal (var-type x) (var-type y))
+                    (equal (var-index x) (var-index y))))
+             (similar-c1form (x y)
+               (and (equal (c1form-name x) (c1form-name y))
+                    (similar (c1form-args x) (c1form-args y))
+                    (similar (c1form-local-vars x) (c1form-local-vars y))
+                    (eql (c1form-sp-change x) (c1form-sp-change y))
+                    (eql (c1form-volatile x) (c1form-volatile y))))
+             (similar-fun (x y)
+               (print (list '? (fun-name x) (fun-name y)))
+               (and! (similar-ref x y)
+                    (eql (fun-global x) (fun-global y))
+                    (eql (fun-exported x) (fun-exported y))
+                    (eql (fun-closure x) (fun-closure y))
+                    (similar (fun-var x) (fun-var y))
+                    (similar (fun-lambda x) (fun-lambda y))
+                    (= (fun-level x) (fun-level y))
+                    (= (fun-env x) (fun-env y))
+                    (= (fun-minarg x) (fun-minarg y))
+                    (eql (fun-maxarg x) (fun-maxarg y))
+                    (every #'similar (fun-local-vars x) (fun-local-vars y))
+                    (every #'similar (fun-referred-vars x) (fun-referred-vars y))
+                    (every #'similar (fun-referred-funs x) (fun-referred-funs y))
+                    (every #'similar (fun-child-funs x) (fun-child-funs y)))))
+      (similar x y))))
+|#
 
 (defun wt-function-prolog (&optional sp local-entry)
   (wt " VT" *reservation-cmacro*
@@ -376,7 +414,10 @@
       (wt-h "T" i)
       (unless (= (1+ i) *max-temp*) (wt-h ",")))
     (wt-h ";"))
-;  (wt-nl-h "#define VU" *reservation-cmacro*)
+  (when *ihs-used-p*
+    (wt-h " \\")
+    (wt-nl-h "struct ihs_frame ihs; \\")
+    (wt-nl-h "const cl_object _ecl_debug_env = Cnil;"))
   (wt-nl-h "#define VLEX" *reservation-cmacro*)
   ;; There should be no need to mark lex as volatile, since we
   ;; are going to pass pointers of this array around and the compiler
@@ -388,8 +429,11 @@
   (when (plusp *max-env*)
     (unless (eq closure-type 'CLOSURE)
       (wt-h " cl_object " *volatile* "env0;"))
+    ;; Note that the closure structure has to be marked volatile
+    ;; or else GCC may optimize away writes into it because it
+    ;; does not know it shared with the rest of the world.
     (when *aux-closure*
-      (wt-h " struct ecl_cclosure aux_closure;"))
+      (wt-h " volatile struct ecl_cclosure aux_closure;"))
     (wt-h " cl_object " *volatile*)
     (dotimes (i *max-env*)
       (wt-h "CLV" i)
@@ -474,6 +518,16 @@
       (setf form (make-c1form* 'PROGN :args (nconc previous (list form))))))
   form)
 
+(defun t1defmacro (args)
+  (check-args-number 'LOAD-TIME-VALUE args 2)
+  (destructuring-bind (name lambda-list &rest body)
+      args
+    (multiple-value-bind (function pprint doc-string)
+        (sys::expand-defmacro name lambda-list body)
+      (let ((fn (cmp-eval function *cmp-env*)))
+        (cmp-env-register-global-macro name fn))
+      (t1expr* (macroexpand `(DEFMACRO ,@args))))))
+
 (defun c1load-time-value (args)
   (check-args-number 'LOAD-TIME-VALUE args 1 2)
   (let ((form (first args))
@@ -509,12 +563,6 @@
     (c2expr form)
     (wt-label *exit*)))
 
-(defun t2decl-body (decls body)
-  (let ((*cmp-env* *cmp-env*)
-        (*notinline* *notinline*))
-    (c1add-declarations decls)
-    (t2expr body)))
-
 (defun parse-cvspecs (x &aux (cvspecs nil))
   (dolist (cvs x (nreverse cvspecs))
     (cond ((symbolp cvs)
@@ -533,8 +581,6 @@
           (t (cmperr "The C variable specification ~s is illegal." cvs))))
   )
 
-(defvar *debug-fun* nil)
-
 (defun locative-type-from-var-kind (kind)
   (cdr (assoc kind
               '((:object . "_ecl_object_loc")
@@ -542,14 +588,12 @@
                 (:char . "_ecl_base_char_loc")
                 (:float . "_ecl_float_loc")
                 (:double . "_ecl_double_loc")
-                ((special global closure replaced lexical) . NIL)))))
+		#+sse2 (:int-sse-pack . "_ecl_int_sse_pack_loc")
+		#+sse2 (:float-sse-pack . "_ecl_float_sse_pack_loc")
+		#+sse2 (:double-sse-pack . "_ecl_double_sse_pack_loc")
+                ((special global closure lexical) . NIL)))))
 
 (defun build-debug-lexical-env (var-locations &optional first)
-  #+:msvc
-  (if first
-      (wt-nl "cl_object _ecl_debug_env = Cnil;")
-    (wt-nl "ihs.lex_env = _ecl_debug_env = Cnil;"))
-
   #-:msvc ;; FIXME! Problem with initialization of statically defined vectors
   (let* ((filtered-locations '())
          (filtered-codes '()))
@@ -569,6 +613,7 @@
     ;; variables, including name and type, and dynamic one, which is
     ;; a vector of pointer to the variables.
     (when filtered-codes
+      (setf *ihs-used-p* t)
       (wt-nl "static const struct ecl_var_debug_info _ecl_descriptors[]={")
       (loop for (name . code) in filtered-codes
             for i from 0
@@ -582,12 +627,9 @@
       (wt "};")
       (wt-nl "ecl_def_ct_vector(_ecl_debug_env,aet_index,_ecl_debug_info_raw,"
              (+ 2 (length filtered-locations))
-             ",,);"))
-    (if first
-        (if (not filtered-codes)
-            (wt-nl "cl_object _ecl_debug_env = Cnil;"))
-        (if filtered-codes
-            (wt-nl "ihs.lex_env=_ecl_debug_env;")))
+             ",,);")
+      (unless first
+        (wt-nl "ihs.lex_env=_ecl_debug_env;")))
     filtered-codes))
 
 (defun pop-debug-lexical-env ()
@@ -606,7 +648,7 @@
 			      (*tail-recursion-info* fun)
                               (lambda-list (c1form-arg 0 lambda-expr))
                               (requireds (car lambda-list))
-                              (*debug-fun* *debug-fun*))
+                              (*cmp-env* (c1form-env lambda-expr)))
   (declare (fixnum level nenvs))
   (print-emitting fun)
   (wt-comment-nl (cond ((fun-global fun) "function definition for ~a")
@@ -616,6 +658,11 @@
   (when (fun-shares-with fun)
     (wt-comment-nl "... shares definition with ~a" (fun-name (fun-shares-with fun)))
     (return-from t3local-fun))
+  (wt-comment-nl "optimize speed ~D, debug ~D, space ~D, safety ~D "
+                 (cmp-env-optimization 'speed)
+                 (cmp-env-optimization 'debug)
+                 (cmp-env-optimization 'space)
+                 (cmp-env-optimization 'safety))
   (cond ((fun-exported fun)
 	 (wt-nl-h "ECL_DLLEXPORT cl_object " cfun "(")
 	 (wt-nl1 "cl_object " cfun "("))
@@ -652,6 +699,7 @@
 	 (*level* level)
 	 (*exit* 'RETURN) (*unwind-exit* '(RETURN))
 	 (*destination* 'RETURN)
+         (*ihs-used-p* nil)
 	 (*reservation-cmacro* (next-cmacro))
 	 (*inline-blocks* 1))
     (wt-nl1 "{")
@@ -663,9 +711,6 @@
     (when (eq (fun-closure fun) 'CLOSURE)
       (wt "cl_object " *volatile* "env0 = cl_env_copy->function->cclosure.env;"))
     (wt-nl *volatile* "cl_object value0;")
-    (when (>= (fun-debug fun) 2)
-      (setq *debug-fun* (fun-debug fun))
-      (wt-nl "struct ihs_frame ihs;"))
     (when (policy-check-stack-overflow)
       (wt-nl "ecl_cs_check(cl_env_copy,value0);"))
     (when (eq (fun-closure fun) 'CLOSURE)
@@ -706,11 +751,11 @@
 		   (c1form-arg 2 lambda-expr)
 		   (fun-cfun fun) (fun-name fun)
 		   narg
-                   (>= (fun-debug fun) 2)
 		   (fun-closure fun))
     (wt-nl1)
     (close-inline-blocks)
-    (wt-function-epilogue (fun-closure fun)))	; we should declare in CLSR only those used
+    ;; we should declare in CLSR only those used
+    (wt-function-epilogue (fun-closure fun)))
   )
 
 ;;; ----------------------------------------------------------------------
@@ -794,35 +839,8 @@
                           (maxarg (fun-maxarg fun))
                           (narg (if (= minarg maxarg) maxarg nil)))
                      (format stream "~%{0,0,~D,0,MAKE_FIXNUM(~D),MAKE_FIXNUM(~D),(cl_objectfn)~A,Cnil,MAKE_FIXNUM(~D)},"
-                             (or narg -1) (second loc) (second fname-loc)
+                             (or narg -1)
+                             (vv-location loc)
+                             (vv-location fname-loc)
                              cfun (fun-file-position fun))))
           (format stream "~%};")))))
-
-;;; ----------------------------------------------------------------------
-
-;;; Pass 1 top-levels.
-
-(put-sysprop 'COMPILER-LET 'T1 'c1compiler-let)
-(put-sysprop 'EVAL-WHEN 'T1 'c1eval-when)
-(put-sysprop 'PROGN 'T1 'c1progn)
-(put-sysprop 'MACROLET 'T1 'c1macrolet)
-(put-sysprop 'LOCALLY 'T1 'c1locally)
-(put-sysprop 'SYMBOL-MACROLET 'T1 'c1symbol-macrolet)
-(put-sysprop 'LOAD-TIME-VALUE 'C1 'c1load-time-value)
-(put-sysprop 'SI:FSET 'C1 'c1fset)
-
-;;; Pass 1 1/2 type propagation
-
-(put-sysprop 'ORDINARY 'P1PROPAGATE 'p1ordinary)
-(put-sysprop 'SI:FSET 'P1PROPAGATE 'p1fset)
-
-;;; Pass 2 initializers.
-
-(put-sysprop 'COMPILER-LET 'T2 't2compiler-let)
-(put-sysprop 'DECL-BODY 't2 't2decl-body)
-(put-sysprop 'PROGN 'T2 't2progn)
-(put-sysprop 'ORDINARY 'T2 't2ordinary)
-(put-sysprop 'LOAD-TIME-VALUE 'T2 't2load-time-value)
-(put-sysprop 'MAKE-FORM 'T2 't2make-form)
-(put-sysprop 'INIT-FORM 'T2 't2init-form)
-(put-sysprop 'SI:FSET 'C2 'c2fset)

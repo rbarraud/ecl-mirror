@@ -22,19 +22,19 @@
 	by accessing the FILE structure of C.
 */
 
-#include <ecl/ecl.h>
 #include <errno.h>
 #include <sys/types.h>
 #ifndef _MSC_VER
 # include <unistd.h>
 #endif
 #include <fcntl.h>
-#if !defined(__MINGW32__) && !defined(_MSC_VER)
-#include <sys/stat.h>
+#if !defined(_MSC_VER) && !defined(__MINGW32__)
+# include <sys/stat.h>
 /* it isn't pulled in by fcntl.h */
 #endif
 #include <string.h>
 #include <stdio.h>
+#include <ecl/ecl.h>
 #include <ecl/ecl-inl.h>
 #include <ecl/internal.h>
 
@@ -45,7 +45,7 @@
 # include <sys/time.h>
 # include <sys/types.h>
 # include <unistd.h>
-#elif defined(__MINGW32__) || defined(_MSC_VER)
+#elif defined(ECL_MS_WINDOWS_HOST)
 # include <winsock.h>
 # include <sys/stat.h>
 # define STDIN_FILENO 0
@@ -1139,6 +1139,7 @@ utf_8_encoder(cl_object stream, unsigned char *buffer, ecl_character c)
  * CLOS STREAMS
  */
 
+#ifdef ECL_CLOS_STREAMS
 static cl_index
 clos_stream_read_byte8(cl_object strm, unsigned char *c, cl_index n)
 {
@@ -1336,6 +1337,7 @@ const struct ecl_file_ops clos_stream_ops = {
 	clos_stream_column,
 	clos_stream_close
 };
+#endif /* ECL_CLOS_STREAMS */
 
 /**********************************************************************
  * STRING OUTPUT STREAMS
@@ -1646,11 +1648,10 @@ ecl_make_string_input_stream(cl_object strng, cl_index istart, cl_index iend)
 	return strm;
 }
 
-@(defun make_string_input_stream (strng &o istart iend)
+@(defun make_string_input_stream (strng &o (istart MAKE_FIXNUM(0)) iend)
         cl_index_pair p;
 @
 	strng = cl_string(strng);
-        if (Null(istart)) istart = MAKE_FIXNUM(0);
         p = ecl_vector_start_end(@[make-string-input-stream], strng, istart, iend);
 	@(return (ecl_make_string_input_stream(strng, p.start, p.end)))
 @)
@@ -2010,11 +2011,7 @@ const struct ecl_file_ops broadcast_ops = {
 		streams = CONS(x, streams);
 	}
 	x = alloc_stream();
-	if (Null(streams)) {
-		x->stream.format = @':pass-through';
-	} else {
-		x->stream.format = cl_stream_external_format(ECL_CONS_CAR(streams));
-	}
+	x->stream.format = @':default';
 	x->stream.ops = duplicate_dispatch_table(&broadcast_ops);
 	x->stream.mode = (short)smm_broadcast;
 	BROADCAST_STREAM_LIST(x) = cl_nreverse(streams);
@@ -2650,7 +2647,7 @@ static void
 io_file_clear_input(cl_object strm)
 {
 	int f = IO_FILE_DESCRIPTOR(strm);
-#if defined(__MINGW32__) || defined(_MSC_VER)
+#if defined(ECL_MS_WINDOWS_HOST)
 	if (isatty(f)) {
 		/* Flushes Win32 console */
 		if (!FlushConsoleInputBuffer((HANDLE)_get_osfhandle(f)))
@@ -3309,7 +3306,7 @@ static void
 io_stream_clear_input(cl_object strm)
 {
 	FILE *fp = IO_STREAM_FILE(strm);
-#if defined(__MINGW32__) || defined(_MSC_VER)
+#if defined(ECL_MS_WINDOWS_HOST)
         int f = fileno(fp);
 	if (isatty(f)) {
 		/* Flushes Win32 console */
@@ -3337,7 +3334,7 @@ io_stream_force_output(cl_object strm)
 	ecl_enable_interrupts();
 }
 
-#define io_stream_finish_output generic_void
+#define io_stream_finish_output io_stream_force_output
 
 static int
 io_stream_interactive_p(cl_object strm)
@@ -4476,7 +4473,7 @@ ecl_open_stream(cl_object fn, enum ecl_smmode smm, cl_object if_exists,
 	cl_env_ptr the_env = &cl_env;
 	cl_object x;
 	int f;
-#if defined(__MINGW32__) || defined(_MSC_VER)
+#if defined(ECL_MS_WINDOWS_HOST)
         int mode = _S_IREAD | _S_IWRITE;
 #else
 	mode_t mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
@@ -4686,7 +4683,7 @@ ecl_open_stream(cl_object fn, enum ecl_smmode smm, cl_object if_exists,
 static int
 file_listen(int fileno)
 {
-#if !defined(__MINGW32__) && !defined(_MSC_VER)
+#if !defined(ECL_MS_WINDOWS_HOST)
 # if defined(HAVE_SELECT)
 	fd_set fds;
 	int retv, fd;
@@ -4806,7 +4803,6 @@ ecl_off_t_to_integer(ecl_off_t offset)
 		output = MAKE_FIXNUM((cl_fixnum)offset);
 	} else {
 		cl_object y = _ecl_big_register0();
-#ifdef WITH_GMP
 		if (sizeof(y->big.big_limbs[0]) == sizeof(cl_index)) {
 			y->big.big_limbs[0] = (cl_index)offset;
 			offset >>= FIXNUM_BITS;
@@ -4816,9 +4812,6 @@ ecl_off_t_to_integer(ecl_off_t offset)
 			y->big.big_limbs[0] = offset;
 			y->big.big_size = 1;
 		}
-#else
-		y->big.big_num = offset;
-#endif
 		output = _ecl_big_register_normalize(y);
 	}
 	return output;
@@ -4833,7 +4826,6 @@ ecl_integer_to_off_t(cl_object offset)
 	} else if (FIXNUMP(offset)) {
 		output = fixint(offset);
 	} else if (ECL_BIGNUMP(offset)) {
-#ifdef WITH_GMP
 		if (sizeof(offset->big.big_limbs[0]) == sizeof(cl_index)) {
 			if (offset->big.big_size > 2) {
 				goto ERR;
@@ -4849,9 +4841,6 @@ ecl_integer_to_off_t(cl_object offset)
 			}
 			output = offset->big.big_limbs[0];
 		}
-#else
-		output = offset->big.big_num;
-#endif
 	} else {
 	ERR:	FEerror("Not a valid file offset: ~S", 1, offset);
 	}
@@ -5059,7 +5048,7 @@ init_file(void)
 	cl_object aux;
 	cl_object null_stream;
 	cl_object external_format = Cnil;
-#if defined(_MSC_VER) || defined(__MINGW32__)
+#if defined(ECL_MS_WINDOWS_HOST)
 # ifdef ECL_UNICODE
 	external_format = cl_list(2, @':latin-1', @':crlf');
 	flags = 0;
@@ -5098,11 +5087,14 @@ init_file(void)
 						    external_format);
 #endif
 	cl_core.standard_input = standard_input;
+        ECL_SET(@'ext::+process-standard-input+', standard_input);
 	ECL_SET(@'*standard-input*', standard_input);
 	cl_core.standard_output = standard_output;
+        ECL_SET(@'ext::+process-standard-output+', standard_output);
 	ECL_SET(@'*standard-output*', standard_output);
 	ECL_SET(@'*trace-output*', standard_output);
 	cl_core.error_output = error_output;
+        ECL_SET(@'ext::+process-error-output+', error_output);
 	ECL_SET(@'*error-output*', error_output);
 
 	cl_core.terminal_io = aux 

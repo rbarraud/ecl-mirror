@@ -18,105 +18,7 @@
 #define ECL_INCLUDE_MATH_H
 #include <ecl/ecl.h>
 #include <ecl/internal.h>
-
-int
-ecl_zerop(cl_object x)
-{
-	switch (type_of(x)) {
-	case t_fixnum:
-		return(x == MAKE_FIXNUM(0));
-
-	case t_bignum:
-	case t_ratio:
-		return(0);
-#ifdef ECL_SHORT_FLOAT
-	case t_shortfloat:
-		return ecl_short_float(x) == 0.0;
-#endif
-	case t_singlefloat:
-		return(sf(x) == 0.0);
-
-	case t_doublefloat:
-		return(df(x) == 0.0);
-#ifdef ECL_LONG_FLOAT
-	case t_longfloat:
-		return ecl_long_float(x) == 0.0;
-#endif
-
-	case t_complex:
-		return(ecl_zerop(x->complex.real) &&
-		       ecl_zerop(x->complex.imag));
-
-	default:
-                FEwrong_type_only_arg(@[zerop], x, @[number]);
-	}
-}
-
-int
-ecl_plusp(cl_object x)
-{
- RESTART:
-	switch (type_of(x)) {
-	case t_fixnum:
-		return(fix(x) > 0);
-
-	case t_bignum:
-		return(_ecl_big_sign(x) > 0);
-
-	case t_ratio:
-		/* INV: rat_den is always positive */
-		x = x->ratio.num;
-		goto RESTART;
-#ifdef ECL_SHORT_FLOAT
-	case t_shortfloat:
-		return ecl_short_float(x) > 0.0;
-#endif
-	case t_singlefloat:
-		return sf(x) > 0.0;
-	case t_doublefloat:
-		return df(x) > 0.0;
-#ifdef ECL_LONG_FLOAT
-	case t_longfloat:
-		return ecl_long_float(x) > 0.0;
-#endif
-	default:
-		FEwrong_type_only_arg(@[plusp], x, @[real]);
-	}
-}
-
-int
-ecl_minusp(cl_object x)
-{
- RESTART:
-	switch (type_of(x)) {
-	case t_fixnum:
-		return(fix(x) < 0);
-
-	case t_bignum:
-		return(_ecl_big_sign(x) < 0);
-
-	case t_ratio:
-		/* INV: rat_den is always positive */
-		x = x->ratio.num;
-		goto RESTART;
-
-#ifdef ECL_SHORT_FLOAT
-	case t_shortfloat:
-		return ecl_short_float(x) < 0;
-#endif
-	case t_singlefloat:
-		return sf(x) < 0;
-
-	case t_doublefloat:
-		return df(x) < 0;
-#ifdef ECL_LONG_FLOAT
-	case t_longfloat:
-		return ecl_long_float(x) < 0;
-#endif
-	default:
-		FEwrong_type_only_arg(@[minusp], x, @[real]);
-	}
-}
+#include <ecl/impl/math_dispatch.h>
 
 int
 ecl_oddp(cl_object x)
@@ -136,24 +38,6 @@ ecl_evenp(cl_object x)
 	unlikely_if (!ECL_BIGNUMP(x))
                 FEwrong_type_only_arg(@[evenp], x, @[integer]);
         return _ecl_big_even_p(x);
-}
-
-cl_object
-cl_zerop(cl_object x)
-{	/* INV: ecl_zerop() checks type */
-	@(return (ecl_zerop(x) ? Ct : Cnil))
-}
-
-cl_object
-cl_plusp(cl_object x)
-{	/* INV: ecl_plusp()  checks type */
-	@(return (ecl_plusp(x) ? Ct : Cnil))
-}
-
-cl_object
-cl_minusp(cl_object x)
-{	/* INV: ecl_minusp() checks type */
-	@(return (ecl_minusp(x) ? Ct : Cnil))
 }
 
 cl_object
@@ -183,17 +67,13 @@ si_float_infinity_p(cl_object x)
 bool
 ecl_float_nan_p(cl_object x)
 {
-	return ecl_number_equalp(x,x);
+	return !ecl_number_equalp(x,x);
 }
 
 bool
 ecl_float_infinity_p(cl_object x)
 {
 	switch (type_of(x)) {
-#ifdef ECL_SHORT_FLOAT
-	case t_shortfloat:
-		return !isifinite(ecl_short_float(x));
-#endif
 	case t_singlefloat:
 		return !isfinite(sf(x));
 	case t_doublefloat:
