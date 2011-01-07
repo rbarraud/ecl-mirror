@@ -3,8 +3,11 @@
 export ANDROID_ROOT=/home/sylvain/src/android/android-ndk-r5
 SYSROOT=$ANDROID_ROOT/platforms/android-9/arch-arm
 
-export CC="$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-gcc --sysroot=$SYSROOT"
-export CXX="$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-g++ --sysroot=$SYSROOT"
+export CC="$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-gcc"
+export CFLAGS="--sysroot=$SYSROOT"
+export CXX="$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-g++"
+export CXXFLAGS="--sysroot=$SYSROOT"
+export LDFLAGS="--sysroot=$SYSROOT"
 #export LD="$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-ld --sysroot=$SYSROOT"
 export AR=$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-ar
 export STRIP=$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-strip
@@ -30,6 +33,7 @@ host_config_opts="\
 	--with-tcp=yes \
 	--with-x=no \
 	--with-dffi=no"
+
 base_config_opts="\
 	--disable-c99complex \
 	--disable-longdouble \
@@ -46,11 +50,11 @@ base_config_opts="\
 	--with-fpe=yes \
 	--with-profile=no \
 	--with-rt=no \
-	--with-serve-event=builtin \
+	--with-serve-event=no \
 	--with-tcp=builtin \
 	--with-x=no \
 	--with-dffi=no"
 
 
-#./configure --host=arm-eabi $base_config_opts $*
-./configure --host=arm-eabi --disable-shared --disable-soname --with-asdf=no --enable-threads=no $*
+./configure --host=arm-eabi $base_config_opts $*
+#./configure --host=arm-eabi --disable-shared --disable-soname --with-asdf=no --enable-threads=no $*
