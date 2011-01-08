@@ -57,4 +57,4 @@ base_config_opts="\
 
 
 ./configure --host=arm-eabi $base_config_opts $*
-#./configure --host=arm-eabi --disable-shared --disable-soname --with-asdf=no --enable-threads=no $*
+
