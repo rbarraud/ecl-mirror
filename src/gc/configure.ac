@@ -93,6 +93,10 @@ case "$THREADS" in
 	AC_DEFINE(GC_LINUX_THREADS)
 	AC_DEFINE(_REENTRANT)
 	;;
+     *-*-eabi*)
+	AC_DEFINE(GC_LINUX_THREADS)
+	AC_DEFINE(_REENTRANT)
+	;;
      *-*-aix*)
 	AC_DEFINE(GC_AIX_THREADS)
 	AC_DEFINE(_REENTRANT)
@@ -181,7 +185,7 @@ case "$THREADS" in
 	THREADDLLIBS="-lpthread -lrt"
 	;;
       *)
-	AC_MSG_ERROR("Pthreads not supported by the GC on this platform.")
+	AC_MSG_ERROR("Pthreads not supported by the GC on this platform: $host.")
 	;;
     esac
     ;;
