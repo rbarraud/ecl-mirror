@@ -1,13 +1,17 @@
 #!/bin/bash
 
+# /opt/android/android-ndk-r5/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-gcc -MMD -MP -MF /home/sylvain/workspace/hello-jni/obj/local/armeabi/objs-debug/hello-jni/ecl_boot.o.d -fpic -ffunction-sections -funwind-tables -fstack-protector -D__ARM_ARCH_5__ -D__ARM_ARCH_5T__ -D__ARM_ARCH_5E__ -D__ARM_ARCH_5TE__  -Wno-psabi -march=armv5te -mtune=xscale -msoft-float -mthumb -Os -fomit-frame-pointer -fno-strict-aliasing -finline-limit=64 -I/home/sylvain/workspace/hello-jni/jni -DANDROID -I/opt/ecl/android/include -I/opt/ecl/android/include/ecl -Wa,--noexecstack -O0 -g -I/opt/android/android-ndk-r5/platforms/android-9/arch-arm/usr/include -c  /home/sylvain/workspace/hello-jni/jni/ecl_boot.c -o /home/sylvain/workspace/hello-jni/obj/local/armeabi/objs-debug/hello-jni/ecl_boot.o
+#/opt/android/android-ndk-r5/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-g++ -Wl,-soname,libhello-jni.so -shared --sysroot=/opt/android/android-ndk-r5/platforms/android-9/arch-arm   /home/sylvain/workspace/hello-jni/obj/local/armeabi/objs-debug/hello-jni/hello-jni.o /home/sylvain/workspace/hello-jni/obj/local/armeabi/objs-debug/hello-jni/ecl_boot.o     /opt/android/android-ndk-r5/platforms/android-9/arch-arm/usr/lib/libc.so /opt/android/android-ndk-r5/platforms/android-9/arch-arm/usr/lib/libstdc++.so /opt/android/android-ndk-r5/platforms/android-9/arch-arm/usr/lib/libm.so   -Wl,--no-undefined -Wl,-z,noexecstack /opt/ecl/android/lib/libecl.a -Wl,-rpath-link=/opt/android/android-ndk-r5/platforms/android-9/arch-arm/usr/lib -lsupc++ -o /home/sylvain/workspace/hello-jni/obj/local/armeabi/libhello-jni.so
+
 export ANDROID_ROOT=/opt/android/android-ndk-r5
 SYSROOT=$ANDROID_ROOT/platforms/android-9/arch-arm
 
 export CC="$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-gcc"
-export CFLAGS="--sysroot=$SYSROOT"
 export CXX="$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-g++"
-export CXXFLAGS="--sysroot=$SYSROOT"
-export LDFLAGS="--sysroot=$SYSROOT"
+
+export CFLAGS="--sysroot=$SYSROOT -fpic -ffunction-sections -funwind-tables  -D__ARM_ARCH_5__ -D__ARM_ARCH_5T__ -D__ARM_ARCH_5E__ -D__ARM_ARCH_5TE__  -Wno-psabi -march=armv5te -mtune=xscale -msoft-float -Os -fomit-frame-pointer -fno-strict-aliasing -finline-limit=64 -DANDROID -Wa,--noexecstack -O0 -g -I/opt/android/android-ndk-r5/platforms/android-9/arch-arm/usr/include"
+export CXXFLAGS=$CFLAGS
+export LDFLAGS="--sysroot=$SYSROOT -Wl,--no-undefined -Wl,-z,noexecstack -Wl,-rpath-link=/opt/android/android-ndk-r5/platforms/android-9/arch-arm/usr/lib  /opt/android/android-ndk-r5/platforms/android-9/arch-arm/usr/lib/libc.so  /opt/android/android-ndk-r5/platforms/android-9/arch-arm/usr/lib/libstdc++.so /opt/android/android-ndk-r5/platforms/android-9/arch-arm/usr/lib/libm.so -lsupc++"
 #export LD="$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-ld --sysroot=$SYSROOT"
 export AR=$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-ar
 export STRIP=$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-strip
