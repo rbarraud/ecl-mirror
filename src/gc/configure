@@ -5068,6 +5068,12 @@ $as_echo "$as_me: WARNING: \"Explicit GC_INIT() calls may be required.\"" >&2;};
         $as_echo "#define _REENTRANT 1" >>confdefs.h
 
         ;;
+     *-*-eabi*)
+        $as_echo "#define GC_LINUX_THREADS 1" >>confdefs.h
+
+        $as_echo "#define _REENTRANT 1" >>confdefs.h
+
+        ;;
      *-*-aix*)
         $as_echo "#define GC_AIX_THREADS 1" >>confdefs.h
 
