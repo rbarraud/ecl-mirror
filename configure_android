@@ -1,6 +1,6 @@
 #!/bin/bash
 
-export ANDROID_ROOT=/home/sylvain/src/android/android-ndk-r5
+export ANDROID_ROOT=/opt/android/android-ndk-r5
 SYSROOT=$ANDROID_ROOT/platforms/android-9/arch-arm
 
 export CC="$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-gcc"

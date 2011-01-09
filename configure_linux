@@ -2,23 +2,23 @@
 
 enable_threads=yes
 
-# host_config_opts="\
-# 	--disable-longdouble \
-# 	--enable-unicode \
-# 	--enable-threads=$enable_threads \
-# 	--with-asdf=yes \
-# 	--with-bytecmp=builtin \
-# 	--with-cmp=builtin \
-# 	--with-clx=no \
-# 	--with-debug-cflags=no \
-# 	--with-defsystem=no \
-# 	--with-fpe=yes \
-# 	--with-profile=no \
-# 	--with-rt=no \
-# 	--with-serve-event=yes \
-# 	--with-tcp=yes \
-# 	--with-x=no \
-# 	--with-dffi=no"
+host_config_opts="\
+	--disable-longdouble \
+	--enable-unicode \
+	--enable-threads=$enable_threads \
+	--with-asdf=yes \
+	--with-bytecmp=builtin \
+	--with-cmp=builtin \
+	--with-clx=no \
+	--with-debug-cflags=no \
+	--with-defsystem=no \
+	--with-fpe=yes \
+	--with-profile=no \
+	--with-rt=no \
+	--with-serve-event=yes \
+	--with-tcp=yes \
+	--with-x=no \
+	--with-dffi=no"
 
 # host_config_opts="\
 # 	--disable-longdouble \
