@@ -1484,12 +1484,15 @@ do_read_delimited_list(int d, cl_object in, bool proper_list)
 	strm = stream_or_default_input(strm);
 #ifdef ECL_CLOS_STREAMS
         if (!ECL_ANSI_STREAM_P(strm)) {
-		token = funcall(2, @'gray::stream-read-line', strm);
-		if (!Null(VALUES(1))) {
-			c = EOF;
-			goto EOFCHK;
+		value0 = funcall(2, @'gray::stream-read-line', strm);
+		value1 = VALUES(1);
+		if (!Null(value1)) {
+			if (!Null(eof_errorp))
+				FEend_of_file(strm);
+			value0 = eof_value;
+			value1 = Ct;
 		}
-		return token;
+		goto OUTPUT;
 	}
 #endif
 	token = si_get_buffer_string();
@@ -1499,7 +1502,7 @@ do_read_delimited_list(int d, cl_object in, bool proper_list)
 			break;
 		ecl_string_push_extend(token, c);
 	} while(1);
-EOFCHK:	if (c == EOF && TOKEN_STRING_FILLP(token) == 0) {
+	if (c == EOF && TOKEN_STRING_FILLP(token) == 0) {
 		if (!Null(eof_errorp))
 			FEend_of_file(strm);
 		value0 = eof_value;
@@ -1517,6 +1520,7 @@ EOFCHK:	if (c == EOF && TOKEN_STRING_FILLP(token) == 0) {
 		value1 = (c == EOF? Ct : Cnil);
 	}
 	si_put_buffer_string(token);
+ OUTPUT:
 	@(return value0 value1)
 @)
 
@@ -2234,7 +2238,8 @@ read_VV(cl_object block, void (*entry_point)(cl_object))
                 }
 #else
 		in=ecl_make_string_input_stream
-                        (make_constant_base_string(block->cblock.data_text),
+                        (ecl_make_simple_base_string(block->cblock.data_text,
+                                                     block->cblock.data_text_size),
                          0, block->cblock.data_text_size);
                 progv_list = ECL_SYM_VAL(env, @'si::+ecl-syntax-progv-list+');
                 bds_ndx = ecl_progv(env, ECL_CONS_CAR(progv_list),
