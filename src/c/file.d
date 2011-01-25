@@ -824,10 +824,8 @@ ucs_2be_decoder(cl_object stream, cl_eformat_read_byte8 read_byte8, cl_object so
 				if ((buffer[0] & 0xF8) != 0xDC) {
 					malformed_character(stream);
 				}
-				c = ((c & 0x3FFF) << 10) + (aux & 0x3FFF) + 0x10000;
+				return ((c & 0x3FFF) << 10) + (aux & 0x3FFF) + 0x10000;
 			}
-		} else {
-			return c;
 		}
 	}
 }
@@ -867,10 +865,8 @@ ucs_2le_decoder(cl_object stream, cl_eformat_read_byte8 read_byte8, cl_object so
 				if ((buffer[1] & 0xF8) != 0xDC) {
 					malformed_character(stream);
 				}
-				c = ((c & 0x3FFF) << 10) + (aux & 0x3FFF) + 0x10000;
+				return ((c & 0x3FFF) << 10) + (aux & 0x3FFF) + 0x10000;
 			}
-		} else {
-			return c;
 		}
 	}
 }
@@ -4436,12 +4432,22 @@ si_copy_stream(cl_object in, cl_object out)
  * FILE OPENING AND CLOSING
  */
 
-static cl_fixnum
-normalize_stream_element_type(cl_object element_type)
+cl_fixnum
+ecl_normalize_stream_element_type(cl_object element_type)
 {
 	cl_fixnum sign = 0;
 	cl_index size;
-	if (funcall(3, @'subtypep', element_type, @'unsigned-byte') != Cnil) {
+	if (element_type == @'signed-byte') {
+		return -8;
+	} else if (element_type == @'unsigned-byte') {
+		return 8;
+	} else if (element_type == @':default') {
+		return 0;
+        } else if (element_type == @'base-char' || element_type == @'character') {
+                return 0;
+	} else if (funcall(3, @'subtypep', element_type, @'character') != Cnil) {
+		return 0;
+	} else if (funcall(3, @'subtypep', element_type, @'unsigned-byte') != Cnil) {
 		sign = +1;
 	} else if (funcall(3, @'subtypep', element_type, @'signed-byte') != Cnil) {
 		sign = -1;
@@ -4563,6 +4569,7 @@ ecl_open_stream(cl_object fn, enum ecl_smmode smm, cl_object if_exists,
 		case smm_input: fp = fopen(fname, OPEN_R); break;
 		case smm_output:
 		case smm_io: fp = fopen(fname, OPEN_RW); break;
+                default:; /* never reached */
 		}
 		x = ecl_make_stream_from_FILE(fn, fp, smm, byte_size, flags,
 					      external_format);
@@ -4643,19 +4650,7 @@ ecl_open_stream(cl_object fn, enum ecl_smmode smm, cl_object if_exists,
 		FEerror("~S is an illegal DIRECTION for OPEN.",
 			1, direction);
  	}
-	if (element_type == @'signed-byte') {
-		byte_size = -8;
-	} else if (element_type == @'unsigned-byte') {
-		byte_size = 8;
-	} else if (element_type == @':default') {
-		byte_size = 0;
-        } else if (element_type == @'base-char' || element_type == @'character') {
-                byte_size = 0;
-	} else if (funcall(3, @'subtypep', element_type, @'character') != Cnil) {
-		byte_size = 0;
-	} else {
-		byte_size = normalize_stream_element_type(element_type);
-	}
+	byte_size = ecl_normalize_stream_element_type(element_type);
 	if (byte_size != 0) {
 		if (flags & ECL_STREAM_FORMAT) {
 			FEerror("Cannot specify a character external format for binary streams.", 0);

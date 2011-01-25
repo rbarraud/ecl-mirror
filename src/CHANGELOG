@@ -150,10 +150,26 @@ ECL 11.1.1:
 ECL 11.1.2
 ==========
 
+* Bugs fixed:
+
+ - Fixed several dozens of typos.
+
+ - ENSURE-DIRECTORIES-EXIST did not work properly with logical pathnames.
+
+ - EXT:SET-LIMIT with option EXT:FRAME-STACK corrupted the frame stack.
+
 * Visible changes:
 
  - When printing error messages, the condition type is shown (M. Mondor)
 
+ - SI:TOP-LEVEL, when invoked without arguments, does not process the
+   command line.
+
+ - The command line used by EXT:PROCESS-COMMAND-ARGS is now by default
+   the one stored in *COMMAND-ARGS*, and this may be "cleared" by the
+   user.
+
+ - SOCKET-MAKE-STREAM now accepts an :ELEMENT-TYPE argument.
 
 ;;; Local Variables: ***
 ;;; mode:text ***

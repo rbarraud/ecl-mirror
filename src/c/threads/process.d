@@ -333,18 +333,19 @@ mp_break_suspend_loop()
         if (frs_sch(@'mp::suspend-loop')) {
                 cl_throw(@'mp::suspend-loop');
         }
+        @(return)
 }
 
 cl_object
 mp_process_suspend(cl_object process)
 {
-        mp_interrupt_process(process, @'mp::suspend-loop');
+        return mp_interrupt_process(process, @'mp::suspend-loop');
 }
 
 cl_object
 mp_process_resume(cl_object process)
 {
-        mp_interrupt_process(process, @'mp::break-suspend-loop');
+        return mp_interrupt_process(process, @'mp::break-suspend-loop');
 }
 
 cl_object
@@ -380,14 +381,12 @@ mp_process_enable(cl_object process)
 	 */
 	cl_env_ptr process_env;
 	int ok;
-	if (Null(mp_get_lock_nowait(process->process.exit_lock))) {
+	unlikely_if (Null(mp_get_lock_nowait(process->process.exit_lock))) {
 		FEerror("Cannot enable the running process ~A.", 1, process);
-		return;
 	}
-	if (process->process.active) {
+	unlikely_if (process->process.active) {
 		mp_giveup_lock(process->process.exit_lock);
 		FEerror("Cannot enable the running process ~A.", 1, process);
-		return;
 	}
 	process_env = _ecl_alloc_env();
 	ecl_init_env(process_env);

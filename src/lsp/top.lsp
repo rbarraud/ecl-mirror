@@ -383,7 +383,7 @@
 
 (defvar *lisp-initialized* nil)
 
-(defun top-level ()
+(defun top-level (&optional (process-command-line nil))
   "Args: ()
 ECL specific.
 The top-level loop of ECL. It is called by default when ECL is invoked."
@@ -393,7 +393,7 @@ The top-level loop of ECL. It is called by default when ECL is invoked."
 
       (in-package "CL-USER")
 
-      (unless *lisp-initialized*
+      (unless (or *lisp-initialized* (null process-command-line))
         (process-command-args)
 	(format t "ECL (Embeddable Common-Lisp) ~A" (lisp-implementation-version))
 	(format t "~%Copyright (C) 1984 Taiichi Yuasa and Masami Hagiya~@
@@ -401,8 +401,8 @@ Copyright (C) 1993 Giuseppe Attardi~@
 Copyright (C) 2000 Juan J. Garcia-Ripoll
 ECL is free software, and you are welcome to redistribute it~@
 under certain conditions; see file 'Copyright' for details.")
-	(format *standard-output* "~%Type :h for Help.  ")
-	(setq *lisp-initialized* t))
+	(format *standard-output* "~%Type :h for Help.  "))
+      (setq *lisp-initialized* t)
 
       (let ((*tpl-level* -1))
 	(tpl))
@@ -509,7 +509,8 @@ Use special code 0 to cancel this operation.")
 	   (loop with this = mp:*current-process*
 		 for p in (mp:all-processes)
 		 unless (or (eq p this)
-			    (eq (mp:process-name p) 'si::handle-signal))
+			    (member (mp:process-name p)
+                                    '(si:signal-servicing si::handle-signal)))
 		 collect p)))
      (when (and (= (length all-processes) 1) *interrupt-lonely-threads-p*)
        (mp:interrupt-process (first all-processes)
@@ -520,7 +521,7 @@ Use special code 0 to cancel this operation.")
 		     (push i suspended)
 		     (mp:process-suspend i)))
      (flet ((do-query-process ()
-			      (print all-processes)
+              (print all-processes)
 	      (query-process all-processes)))
        (mp:with-local-interrupts
 	(restart-case (simple-terminal-interrupt)

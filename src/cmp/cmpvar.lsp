@@ -410,7 +410,7 @@
 	   (form (c1expr (second l)))
 	   (type (type-and (var-type vref) (c1form-primary-type form))))
       (unless type
-	(cmpwarn "Type mismatch between ~s and ~s." name form)
+	(cmpwarn "Type mismatch between ~s and ~s." (var-name vref) form)
 	(setq type T))
 	;; Is this justified????
 	#+nil(setf (c1form-type form) type)

@@ -14,18 +14,16 @@
 
 (in-package "SYSTEM")
 
-(export '(*lisp-init-file-list*
-          *help-message*
-          +default-command-arg-rules+
-          command-args
-          process-command-args))
+(defparameter *command-args*
+  (loop for i from 0 below (argc)
+     collect (argv i)))
 
-(defvar *command-break-enable* nil)
+(defparameter *command-break-enable* nil)
 
-(defvar *lisp-init-file-list* '("~/.ecl" "~/.eclrc")
+(defparameter *lisp-init-file-list* '("~/.ecl" "~/.eclrc")
   "List of files automatically loaded when ECL is invoked.")
 
-(defvar *help-message* "
+(defparameter *help-message* "
 Usage: ecl [-? | --help]
            [-dir dir] [-load file] [-shell file] [-eval expr] [-rc | -norc] [-hp | -nohp]
            [--c-stack size] [--lisp-stack size] [--heap-size size] [--frame-stack size]
@@ -39,8 +37,7 @@ Usage: ecl [-? | --help]
 
 (defun command-args ()
   "Returns the command line arguments as list"
-  (loop for i from 0 below (argc)
-	collect (argv i)))
+  *command-args*)
 
 (defun command-arg-error (str &rest fmt-args)
   ;; Format an error message and quit
