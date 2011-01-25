@@ -1237,6 +1237,7 @@ GC_API int WRAP_FUNC(pthread_detach)(pthread_t thread)
   /* really have an option in that the process is not in a fully        */
   /* functional state while a thread is exiting.                        */
 
+#ifndef PLATFORM_ANDROID
   GC_API int WRAP_FUNC(pthread_cancel)(pthread_t thread)
   {
 #   ifdef CANCEL_SAFE
@@ -1259,6 +1260,7 @@ GC_API int WRAP_FUNC(pthread_detach)(pthread_t thread)
 #   endif
     return REAL_FUNC(pthread_cancel)(thread);
   }
+#endif
 
   GC_API GC_PTHREAD_EXIT_ATTRIBUTE void WRAP_FUNC(pthread_exit)(void *retval)
   {
