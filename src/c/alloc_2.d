@@ -734,6 +734,68 @@ to_bitmap(void *x, void *y)
         return 1 << n;
 }
 
+
+void
+ecl_gc_base_init()
+{
+
+	/*
+	 * Handle the case when we are called from a thread different from the main thread,
+	 * confusing libgc.
+	 * FIXME: Move this to libgc where it belongs.
+	 *
+	 * we used to do this only when running on valgrind,
+	 * but it happens also in other setups.
+	 */
+	GC_all_interior_pointers = 0;
+
+/* #if defined(HAVE_PTHREAD_GETATTR_NP) && defined(HAVE_PTHREAD_ATTR_GETSTACK) */
+	{
+		size_t size;
+		void *sstart;
+		pthread_attr_t attr;
+		pthread_getattr_np (pthread_self (), &attr);
+		pthread_attr_getstack (&attr, &sstart, &size);
+		pthread_attr_destroy (&attr);
+		/* fprintf(stderr,"stackbottom pth is: %p\n", (char*)sstart + size); */
+
+		/* apparently with some linuxthreads implementations sstart can be NULL,
+		 * fallback to the more imprecise method (bug# 78096).
+		 */
+		if (sstart) {
+			GC_stackbottom = (char*)sstart + size;
+		} else {
+			int dummy;
+			size_t stack_bottom = (size_t)&dummy;
+			stack_bottom += 4095;
+			stack_bottom &= ~4095;
+			GC_stackbottom = (char*)stack_bottom;
+		}
+	}
+/* #elif defined(HAVE_PTHREAD_GET_STACKSIZE_NP) && defined(HAVE_PTHREAD_GET_STACKADDR_NP) */
+/* 		GC_stackbottom = (char*)pthread_get_stackaddr_np (pthread_self ()); */
+/* 	{ */
+/* 		int dummy; */
+/* 		size_t stack_bottom = (size_t)&dummy; */
+/* 		stack_bottom += 4095; */
+/* 		stack_bottom &= ~4095; */
+/* 		fprintf(stderr,"stackbottom is: %p\n", (char*)stack_bottom); */
+/* 		GC_stackbottom = (char*)stack_bottom; */
+/* 	} */
+/* #endif */
+
+#if !defined(PLATFORM_ANDROID)
+	/* If GC_no_dls is set to true, GC_find_limit is not called. This causes a seg fault on Android. */
+	GC_no_dls = 1;
+#endif
+	GC_time_limit = GC_TIME_UNLIMITED;
+	GC_init ();
+//	GC_oom_fn = ecl_gc_out_of_memory;
+//	GC_set_warn_proc (ecl_gc_warning);
+//	GC_finalize_on_demand = 1;
+//	GC_finalizer_notifier = ecl_gc_finalize_notify;
+}
+
 void
 init_alloc(void)
 {
@@ -753,10 +815,13 @@ init_alloc(void)
 	 * 3) Out of the incremental garbage collector, we only use the
 	 *    generational component.
 	 */
-	GC_no_dls = 1;
-	GC_all_interior_pointers = 0;
-	GC_time_limit = GC_TIME_UNLIMITED;
-	GC_init();
+	/* GC_no_dls = 1; */
+	/* GC_all_interior_pointers = 0; */
+	/* GC_time_limit = GC_TIME_UNLIMITED; */
+	/* GC_init(); */
+
+	ecl_gc_base_init();
+
 	if (ecl_get_option(ECL_OPT_INCREMENTAL_GC)) {
 		GC_enable_incremental();
 	}
