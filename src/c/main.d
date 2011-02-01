@@ -263,36 +263,48 @@ cl_shutdown(void)
 }
 
 #ifdef ECL_UNICODE
+
+void (*read_char_db_hook)(char*) = NULL;
+
 static void
 read_char_database()
 {
-	cl_object s = si_base_string_concatenate(2,
-						 si_get_library_pathname(),
-						 make_constant_base_string("ucd.dat"));
+	cl_object s;
 	cl_object output = Cnil;
-	FILE *f = fopen((char *)s->base_string.self, "rb");
-	if (f) {
-		cl_index size, read;
-		if (!fseek(f, 0, SEEK_END)) {
-			size = ftell(f);
-			fseek(f, 0, SEEK_SET);
-			output = ecl_alloc_simple_vector(size, aet_b8);	    
-			read = 0;
-			while (read < size) {
-				cl_index res;
-				res = fread(output->vector.self.b8 + read, 1, size - read, f);
-				if (res > 0) {
-					read += res;
-                                } else {
-					output = Cnil;
-					break;
-				}
+
+	if(!read_char_db_hook) {
+			s = si_base_string_concatenate(2,
+										   si_get_library_pathname(),
+										   make_constant_base_string("ucd.dat"));
+
+			FILE *f = fopen((char *)s->base_string.self, "rb");
+			if (f) {
+					cl_index size, read;
+					if (!fseek(f, 0, SEEK_END)) {
+							size = ftell(f);
+							fseek(f, 0, SEEK_SET);
+							output = ecl_alloc_simple_vector(size, aet_b8);	    
+							read = 0;
+							while (read < size) {
+									cl_index res;
+									res = fread(output->vector.self.b8 + read, 1, size - read, f);
+									if (res > 0) {
+											read += res;
+									} else {
+											output = Cnil;
+											break;
+									}
+							}
+					}
+					fclose(f);
 			}
-		}
-		fclose(f);
+	} else {
+			output = ecl_alloc_simple_vector(102258, aet_b8);
+			(*read_char_db_hook)(output->vector.self.b8);
 	}
+	
 	if (output == Cnil) {
-		printf("Unable to read Unicode database: %s\n", s->base_string.self);
+		printf("Unable to read Unicode database\n");
 		abort();
 	} else {
 		uint8_t *p = output->vector.self.b8;
