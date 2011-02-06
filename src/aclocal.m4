@@ -768,9 +768,7 @@ dnl --------------------------------------------------------------
 dnl Determine whether GCC supports backtraces
 dnl
 AC_DEFUN([ECL_GCC_BACKTRACE],[
-if test "x${cross_compiling}" = "xyes"; then
-   AC_DEFINE(HAVE___BUILTIN_RETURN_ADDRESS)
-else
+if test "x${cross_compiling}" != "xyes"; then
 AC_RUN_IFELSE(
   [AC_LANG_SOURCE([[
     void *foo() { return __builtin_return_address(1); }

@@ -551,7 +551,7 @@ memory limits before executing the program again."))))
 (define-condition control-error (error) ())
 
 (define-condition stream-error (error)
-  ((stream :INITARG :STREAM :READER stream-error-stream)))
+  ((stream :initarg :stream :reader stream-error-stream)))
 
 (define-condition end-of-file (stream-error)
   ()

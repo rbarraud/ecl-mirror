@@ -158,6 +158,10 @@ ECL 11.1.2
 
  - EXT:SET-LIMIT with option EXT:FRAME-STACK corrupted the frame stack.
 
+ - The array of boot-time symbols is fixed and independent of the features
+   that are compiled in. This is essential for cross-compilation and also
+   for sharing C code among different builds.
+
 * Visible changes:
 
  - When printing error messages, the condition type is shown (M. Mondor)
@@ -170,6 +174,24 @@ ECL 11.1.2
    user.
 
  - SOCKET-MAKE-STREAM now accepts an :ELEMENT-TYPE argument.
+
+ - When --enable-rpath is used in combination with --with-gmp-prefix, then the
+   path of the GMP library is hardcoded into ECL. If the remaining libraries
+   (GC, libffi) are in a similar location this will make ECL work without
+   further flags, and without modifying LD_LIBRARY_PATH or DYLD_LIBRARY_PATH.
+
+ - All arguments after the '--' command line option are stored in a global
+   variable, ext:*unprocessed-ecl-command-args*.
+
+ - In the rules passed to ext:process-command-args, :stop now implies that all
+   remaining arguments including the current one are collected and passed to
+   the rule code. An example of use of this option
+      ;; Collect all arguments _after_ the command line option --
+      ("--" 1 (setf ext:*unprocessed-ecl-command-args* (rest 1)) :stop)
+      ;; Collect all arguments including the first unknown one
+      ("*DEFAULTS*" 1 (setf ext:*unprocessed-ecl-command-args* 1) :stop)
+
+ - ECL will always build, by default, with support for Unicode strings.
 
 ;;; Local Variables: ***
 ;;; mode:text ***

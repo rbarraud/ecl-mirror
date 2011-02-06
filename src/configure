@@ -1418,7 +1418,7 @@ Optional Features:
   --enable-local-gmp      Deprecated! See --with-system-gmp
   --enable-opcode8        interpreter uses 8-bit codes (default=NO, only works
                           on Intel)
-  --enable-unicode        enable support for unicode (default=NO)
+  --enable-unicode        enable support for unicode (default=YES)
   --enable-longdouble     include support for long double (yes|no|auto,
                           default=AUTO)
   --enable-c99complex     include support for C complex type (default=NO)
@@ -2631,21 +2631,21 @@ fi
 
 # Check whether --with-gmp-prefix was given.
 if test "${with_gmp_prefix+set}" = set; then :
-  withval=$with_gmp_prefix; GMP_CPPFLAGS="-I$withval/include"; GMP_LDFLAGS="-L$withval/lib"
+  withval=$with_gmp_prefix; GMP_INCDIR="$withval/include"; GMP_LIBDIR="$withval/lib"
 fi
 
 
 
 # Check whether --with-gmp-incdir was given.
 if test "${with_gmp_incdir+set}" = set; then :
-  withval=$with_gmp_incdir; GMP_CPPFLAGS="-I$withval"
+  withval=$with_gmp_incdir; GMP_INCDIR="$withval"
 fi
 
 
 
 # Check whether --with-gmp-libdir was given.
 if test "${with_gmp_libdir+set}" = set; then :
-  withval=$with_gmp_libdir; GMP_LDFLAGS="-L$withval"
+  withval=$with_gmp_libdir; GMP_LIBDIR="$withval"
 fi
 
 
@@ -2831,7 +2831,7 @@ fi
 if test "${enable_unicode+set}" = set; then :
   enableval=$enable_unicode;
 else
-  enable_unicode=no
+  enable_unicode=yes
 fi
 
 
@@ -5062,6 +5062,17 @@ else
   INFOEXT=info
 fi
 
+if test "x$GMP_INCDIR" != "x"; then
+  GMP_CPPFLAGS="-I$GMP_INCDIR"
+fi
+if test "x$GMP_LIBDIR" != "x"; then
+  GMP_LDFLAGS="-L$GMP_LIBDIR"
+  if test "$enable_rpath" = "yes"; then
+    if (echo "$ECL_LDRPATH" | grep '~A') > /dev/null; then
+      GMP_LDFLAGS=`echo $ECL_LDRPATH | sed "s,~A,$GMP_LIBDIR,"`" $GMP_LDFLAGS"
+    fi
+  fi
+fi
 CPPFLAGS="$CPPFLAGS $GMP_CPPFLAGS"
 LDFLAGS="$LDFLAGS $GMP_LDFLAGS"
 
@@ -9034,10 +9045,7 @@ $as_echo "#define ECL_SMALL_BYTECODES 1" >>confdefs.h
 fi
 
 
-if test "x${cross_compiling}" = "xyes"; then
-   $as_echo "#define HAVE___BUILTIN_RETURN_ADDRESS 1" >>confdefs.h
-
-else
+if test "x${cross_compiling}" != "xyes"; then
 if test "$cross_compiling" = yes; then :
   { { $as_echo "$as_me:${as_lineno-$LINENO}: error: in \`$ac_pwd':" >&5
 $as_echo "$as_me: error: in \`$ac_pwd':" >&2;}
