@@ -15,7 +15,6 @@ export AR=$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x8
 export STRIP=$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-strip
 export RANLIB=$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-ranlib
 
-enable_threads=yes
 
 base_config_opts="\
 	--disable-c99complex \
@@ -23,7 +22,7 @@ base_config_opts="\
 	--disable-soname \
     	--disable-shared \
 	--enable-unicode \
-	--enable-threads=$enable_threads \
+	--enable-threads=yes \
 	--with-asdf=no \
 	--with-bytecmp=builtin \
 	--with-cmp=no \

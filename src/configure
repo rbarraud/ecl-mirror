@@ -4606,7 +4606,7 @@ do
 set dummy $ac_prog; ac_word=$2
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for $ac_word" >&5
 $as_echo_n "checking for $ac_word... " >&6; }
-if ${ac_cv_prog_ETAGS+:} false; then :
+if test "${ac_cv_prog_ETAGS+set}" = set; then :
   $as_echo_n "(cached) " >&6
 else
   if test -n "$ETAGS"; then
@@ -6610,7 +6610,7 @@ done
 
 
 for ac_header in sys/resource.h sys/utsname.h float.h pwd.h dlfcn.h link.h \
-                  mach-o/dyld.h ulimit.h dirent.h sys/ioctl.h sys/select.h \
+                  mach-o/dyld.h dirent.h sys/ioctl.h sys/select.h \
                   sys/wait.h semaphore.h
 do :
   as_ac_Header=`$as_echo "ac_cv_header_$ac_header" | $as_tr_sh`
@@ -6618,6 +6618,24 @@ ac_fn_c_check_header_mongrel "$LINENO" "$ac_header" "$as_ac_Header" "$ac_include
 if eval test \"x\$"$as_ac_Header"\" = x"yes"; then :
   cat >>confdefs.h <<_ACEOF
 #define `$as_echo "HAVE_$ac_header" | $as_tr_cpp` 1
+_ACEOF
+
+fi
+
+done
+
+
+
+for ac_header in ulimit.h
+do :
+  ac_fn_c_check_header_compile "$LINENO" "ulimit.h" "ac_cv_header_ulimit_h" "#ifdef HAVE_ULIMIT_H
+# include <ulimit.h>
+#endif
+
+"
+if test "x$ac_cv_header_ulimit_h" = x""yes; then :
+  cat >>confdefs.h <<_ACEOF
+#define HAVE_ULIMIT_H 1
 _ACEOF
 
 fi
