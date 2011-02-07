@@ -15,7 +15,7 @@
 
 #include <stdio.h>
 #include <ecl/ecl.h>
-#ifdef ECL_THREADS
+#if defined(ECL_THREADS) || defined(HAVE_PTHREAD_GETATTR_NP)
 # ifdef ECL_WINDOWS_THREADS
 #  include <windows.h>
 # else
@@ -734,7 +734,7 @@ to_bitmap(void *x, void *y)
         return 1 << n;
 }
 
-
+/* This is taken from mono */
 void
 ecl_gc_base_init()
 {
@@ -749,7 +749,7 @@ ecl_gc_base_init()
 	 */
 	GC_all_interior_pointers = 0;
 
-/* #if defined(HAVE_PTHREAD_GETATTR_NP) && defined(HAVE_PTHREAD_ATTR_GETSTACK) */
+#if defined(HAVE_PTHREAD_GETATTR_NP) && defined(HAVE_PTHREAD_ATTR_GETSTACK)
 	{
 		size_t size;
 		void *sstart;
@@ -772,17 +772,17 @@ ecl_gc_base_init()
 			GC_stackbottom = (char*)stack_bottom;
 		}
 	}
-/* #elif defined(HAVE_PTHREAD_GET_STACKSIZE_NP) && defined(HAVE_PTHREAD_GET_STACKADDR_NP) */
-/* 		GC_stackbottom = (char*)pthread_get_stackaddr_np (pthread_self ()); */
-/* 	{ */
-/* 		int dummy; */
-/* 		size_t stack_bottom = (size_t)&dummy; */
-/* 		stack_bottom += 4095; */
-/* 		stack_bottom &= ~4095; */
-/* 		fprintf(stderr,"stackbottom is: %p\n", (char*)stack_bottom); */
-/* 		GC_stackbottom = (char*)stack_bottom; */
-/* 	} */
-/* #endif */
+#elif defined(HAVE_PTHREAD_GET_STACKSIZE_NP) && defined(HAVE_PTHREAD_GET_STACKADDR_NP)
+		GC_stackbottom = (char*)pthread_get_stackaddr_np (pthread_self ());
+	{
+		int dummy;
+		size_t stack_bottom = (size_t)&dummy;
+		stack_bottom += 4095;
+		stack_bottom &= ~4095;
+		fprintf(stderr,"stackbottom is: %p\n", (char*)stack_bottom);
+		GC_stackbottom = (char*)stack_bottom;
+	}
+#endif
 
 #if !defined(PLATFORM_ANDROID)
 	/* If GC_no_dls is set to true, GC_find_limit is not called. This causes a seg fault on Android. */
@@ -815,12 +815,12 @@ init_alloc(void)
 	 * 3) Out of the incremental garbage collector, we only use the
 	 *    generational component.
 	 */
-	/* GC_no_dls = 1; */
-	/* GC_all_interior_pointers = 0; */
-	/* GC_time_limit = GC_TIME_UNLIMITED; */
-	/* GC_init(); */
+	GC_no_dls = 1;
+	GC_all_interior_pointers = 0;
+	GC_time_limit = GC_TIME_UNLIMITED;
+	GC_init();
 
-	ecl_gc_base_init();
+	/* ecl_gc_base_init(); */
 
 	if (ecl_get_option(ECL_OPT_INCREMENTAL_GC)) {
 		GC_enable_incremental();

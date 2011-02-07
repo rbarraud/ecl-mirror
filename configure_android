@@ -6,18 +6,19 @@ ECLROOT=$(dirname $(readlink -f ${0}))
 
 export CC="$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-gcc"
 export CXX="$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-g++"
-export CFLAGS="--sysroot=$SYSROOT -fpic -ffunction-sections -funwind-tables  -D__ARM_ARCH_5__ -D__ARM_ARCH_5T__ -D__ARM_ARCH_5E__ -D__ARM_ARCH_5TE__ -Wno-psabi -march=armv5te -mtune=xscale -msoft-float -fomit-frame-pointer -fno-strict-aliasing -finline-limit=64 -DANDROID  -DPLATFORM_ANDROID -Wa,--noexecstack -O0 -g -I/opt/android/android-ndk-r5/platforms/android-9/arch-arm/usr/include -I$ECLROOT/platforms/android/include -DUSE_GET_STACKBASE_FOR_MAIN"
-export CXXFLAGS=$CFLAGS
+export CFLAGS="--sysroot=$SYSROOT -fpic -ffunction-sections -funwind-tables  -D__ARM_ARCH_5__ -D__ARM_ARCH_5T__ -D__ARM_ARCH_5E__ -D__ARM_ARCH_5TE__ -Wno-psabi -march=armv5te -mtune=xscale -msoft-float -fomit-frame-pointer -fno-strict-aliasing -finline-limit=64 -DANDROID  -DPLATFORM_ANDROID -Wa,--noexecstack -O0 -g -I/opt/android/android-ndk-r5/platforms/android-9/arch-arm/usr/include -I$ECLROOT/platforms/android/include"
+export CFLAGS="$CFLAGS -DUSE_GET_STACKBASE_FOR_MAIN"
+#export CFLAGS="$CFLAGS -DHAVE_PTHREAD_GETATTR_NP -DHAVE_PTHREAD_ATTR_GETSTACK"
+export CXXFLAGS="$CFLAGS"
+
 export LDFLAGS="--sysroot=$SYSROOT -g -Wl,--no-undefined -Wl,-z,noexecstack -Wl,-rpath-link=/opt/android/android-ndk-r5/platforms/android-9/arch-arm/usr/lib  /opt/android/android-ndk-r5/platforms/android-9/arch-arm/usr/lib/libc.so  /opt/android/android-ndk-r5/platforms/android-9/arch-arm/usr/lib/libstdc++.so /opt/android/android-ndk-r5/platforms/android-9/arch-arm/usr/lib/libm.so -lsupc++"
-#export LD="$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-ld --sysroot=$SYSROOT"
+
 export AR=$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-ar
 export STRIP=$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-strip
 export RANLIB=$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linux-x86/bin/arm-linux-androideabi-ranlib
 
 
 base_config_opts="\
-	--disable-c99complex \
-	--disable-longdouble \
 	--disable-soname \
     	--disable-shared \
 	--enable-unicode \
@@ -27,15 +28,10 @@ base_config_opts="\
 	--with-cmp=no \
 	--with-clx=no \
 	--with-debug-cflags=yes \
-	--with-defsystem=no \
-	--with-fpe=yes \
-	--with-profile=no \
-	--with-rt=no \
 	--with-serve-event=no \
 	--with-tcp=builtin \
-	--with-x=no \
-	--with-dffi=no"
+	--with-x=no"
 
 
-./configure --host=arm-eabi $base_config_opts $*
+./configure --host=arm-linux-eabi $base_config_opts $*
 
