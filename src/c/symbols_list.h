@@ -1121,6 +1121,7 @@ cl_symbols[] = {
 {SYS_ "BASE-STRING-P", SI_ORDINARY, si_base_string_p, 1, OBJNULL},
 {SYS_ "BC-DISASSEMBLE", SI_ORDINARY, si_bc_disassemble, 1, OBJNULL},
 {SYS_ "BC-SPLIT", SI_ORDINARY, si_bc_split, 1, OBJNULL},
+{SYS_ "BC-JOIN", SI_ORDINARY, si_bc_join, 4, OBJNULL},
 {SYS_ "BDS-TOP", SI_ORDINARY, si_bds_top, 0, OBJNULL},
 {SYS_ "BDS-VAL", SI_ORDINARY, si_bds_val, 1, OBJNULL},
 {SYS_ "BDS-VAR", SI_ORDINARY, si_bds_var, 1, OBJNULL},
@@ -2033,6 +2034,10 @@ cl_symbols[] = {
 {EXT_ "DECODING-ERROR", EXT_ORDINARY, NULL, 3, OBJNULL},
 {EXT_ "ENCODING-ERROR", EXT_ORDINARY, NULL, 3, OBJNULL},
 /* #endif ECL_UNICODE */
+
+{SYS_ "PROPER-LIST-P", SI_ORDINARY, si_proper_list_p, 1, OBJNULL},
+{SYS_ "TRACED-OLD-DEFINITION", SI_ORDINARY, ECL_NAME(si_traced_old_definition), 1, OBJNULL},
+{SYS_ "*TRACE-LIST*", SI_ORDINARY, NULL, -1, Cnil},
 
 /* Tag for end of list */
 {NULL, CL_ORDINARY, NULL, -1, OBJNULL}};

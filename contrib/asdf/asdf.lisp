@@ -1,5 +1,5 @@
 ;;; -*- mode: common-lisp; package: asdf; -*-
-;;; This is ASDF 2.012.2: Another System Definition Facility.
+;;; This is ASDF 2.012.5: Another System Definition Facility.
 ;;;
 ;;; Feedback, bug reports, and patches are all welcome:
 ;;; please mail to <asdf-devel@common-lisp.net>.
@@ -62,7 +62,7 @@
   (setf excl::*autoload-package-name-alist*
         (remove "asdf" excl::*autoload-package-name-alist*
                 :test 'equalp :key 'car))
-  #+ecl (require :cmp)
+  #+(and ecl (not ecl-bytecmp)) (require :cmp)
   #+(and (or win32 windows mswindows mingw32) (not cygwin)) (pushnew :asdf-windows *features*)
   #+(or unix cygwin) (pushnew :asdf-unix *features*))
 
@@ -83,7 +83,7 @@
          ;; "2.345.6" would be a development version in the official upstream
          ;; "2.345.0.7" would be your seventh local modification of official release 2.345
          ;; "2.345.6.7" would be your seventh local modification of development version 2.345.6
-         (asdf-version "2.012.2")
+         (asdf-version "2.012.5")
          (existing-asdf (fboundp 'find-system))
          (existing-version *asdf-version*)
          (already-there (equal asdf-version existing-version)))
@@ -189,7 +189,8 @@
            (#:perform #:explain #:output-files #:operation-done-p
             #:perform-with-restarts #:component-relative-pathname
             #:system-source-file #:operate #:find-component #:find-system
-            #:apply-output-translations #:translate-pathname* #:resolve-location)
+            #:apply-output-translations #:translate-pathname* #:resolve-location
+            #:compile-file*)
            :unintern
            (#:*asdf-revision* #:around #:asdf-method-combination
             #:split #:make-collector
@@ -501,7 +502,7 @@ starting the separation from the end, e.g. when called with arguments
          ;; Giving :unspecific as argument to make-pathname is not portable.
          ;; See CLHS make-pathname and 19.2.2.2.3.
          ;; We only use it on implementations that support it.
-         (or #+(or ccl gcl lispworks sbcl) :unspecific)))
+         (or #+(or clozure gcl lispworks sbcl) :unspecific)))
     (destructuring-bind (name &optional (type unspecific))
         (split-string filename :max 2 :separator ".")
       (if (equal name "")
@@ -558,16 +559,27 @@ pathnames."
     :unless (eq k key)
     :append (list k v)))
 
+#+mcl
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (ccl:define-entry-point (_getenv "getenv") ((name :string)) :string))
+
 (defun* getenv (x)
-  (#+(or abcl clisp) ext:getenv
-   #+allegro sys:getenv
-   #+clozure ccl:getenv
-   #+(or cmu scl) (lambda (x) (cdr (assoc x ext:*environment-list* :test #'string=)))
-   #+ecl si:getenv
-   #+gcl system:getenv
-   #+lispworks lispworks:environment-variable
-   #+sbcl sb-ext:posix-getenv
-   x))
+  (declare (ignorable x))
+  #+(or abcl clisp) (ext:getenv x)
+  #+allegro (sys:getenv x)
+  #+clozure (ccl:getenv x)
+  #+(or cmu scl) (cdr (assoc x ext:*environment-list* :test #'string=))
+  #+ecl (si:getenv x)
+  #+gcl (system:getenv x)
+  #+genera nil
+  #+lispworks (lispworks:environment-variable x)
+  #+mcl (ccl:with-cstrs ((name x))
+          (let ((value (_getenv name)))
+            (unless (ccl:%null-ptr-p value)
+              (ccl:%get-cstring value))))
+  #+sbcl (sb-ext:posix-getenv x)
+  #-(or abcl allegro clisp clozure cmu ecl gcl genera lispworks mcl sbcl scl)
+  (error "getenv not available on your implementation"))
 
 (defun* directory-pathname-p (pathname)
   "Does PATHNAME represent a directory?
@@ -672,8 +684,8 @@ with given pathname and if it exists return its truename."
    (string (probe-file* (parse-namestring p)))
    (pathname (unless (wild-pathname-p p)
                #.(or #+(or allegro clozure cmu ecl sbcl scl) '(probe-file p)
-               #+clisp (aif (find-symbol (string '#:probe-pathname) :ext) `(ignore-errors (,it p)))
-               '(ignore-errors (truename p)))))))
+                     #+clisp (aif (find-symbol (string '#:probe-pathname) :ext) `(ignore-errors (,it p)))
+                     '(ignore-errors (truename p)))))))
 
 (defun* truenamize (p)
   "Resolve as much of a pathname as possible"
@@ -710,7 +722,9 @@ with given pathname and if it exists return its truename."
 
 (defun* resolve-symlinks (path)
   #-allegro (truenamize path)
-  #+allegro (excl:pathname-resolve-symbolic-links path))
+  #+allegro (if (typep path 'logical-pathname)
+                path
+                (excl:pathname-resolve-symbolic-links path)))
 
 (defun* default-directory ()
   (truenamize (pathname-directory-pathname *default-pathname-defaults*)))
@@ -730,12 +744,15 @@ with given pathname and if it exists return its truename."
 (defun* wilden (path)
   (merge-pathnames* *wild-path* path))
 
+(defun directory-separator-for-host (&optional (pathname *default-pathname-defaults*))
+  (let ((foo (make-pathname :directory '(:absolute "FOO") :defaults pathname)))
+    (last-char (namestring foo))))
+
 (defun* directorize-pathname-host-device (pathname)
   (let* ((root (pathname-root pathname))
          (wild-root (wilden root))
          (absolute-pathname (merge-pathnames* pathname root))
-         (foo (make-pathname :directory '(:absolute "FOO") :defaults root))
-         (separator (last-char (namestring foo)))
+         (separator (directory-separator-for-host root))
          (root-namestring (namestring root))
          (root-string
           (substitute-if #\/
@@ -859,13 +876,6 @@ processed in order by OPERATE."))
 ;;;; -------------------------------------------------------------------------
 ;;; Methods in case of hot-upgrade. See https://bugs.launchpad.net/asdf/+bug/485687
 (when *upgraded-p*
-   #+ecl
-   (when (find-class 'compile-op nil)
-     (defmethod update-instance-for-redefined-class :after
-         ((c compile-op) added deleted plist &key)
-       (declare (ignore added deleted))
-       (let ((system-p (getf plist 'system-p)))
-         (when system-p (setf (getf (slot-value c 'flags) :system-p) system-p)))))
    (when (find-class 'module nil)
      (eval
       `(defmethod update-instance-for-redefined-class :after
@@ -1876,7 +1886,7 @@ recursive calls to traverse.")
    (on-failure :initarg :on-failure :accessor operation-on-failure
                :initform *compile-file-failure-behaviour*)
    (flags :initarg :flags :accessor compile-op-flags
-          :initform #-ecl nil #+ecl '(:system-p t))))
+          :initform nil)))
 
 (defun output-file (operation component)
   "The unique output file of performing OPERATION on COMPONENT"
@@ -1885,25 +1895,17 @@ recursive calls to traverse.")
     (first files)))
 
 (defmethod perform :before ((operation compile-op) (c source-file))
-  (map nil #'ensure-directories-exist (output-files operation c)))
-
-#+ecl
-(defmethod perform :after ((o compile-op) (c cl-source-file))
-  ;; Note how we use OUTPUT-FILES to find the binary locations
-  ;; This allows the user to override the names.
-  (let* ((files (output-files o c))
-         (object (first files))
-         (fasl (second files)))
-    (c:build-fasl fasl :lisp-files (list object))))
+   (loop :for file :in (asdf:output-files operation c)
+     :for pathname = (if (typep file 'logical-pathname)
+                         (translate-logical-pathname file)
+                         file)
+     :do (ensure-directories-exist pathname)))
 
 (defmethod perform :after ((operation operation) (c component))
   (setf (gethash (type-of operation) (component-operation-times c))
         (get-universal-time)))
 
-(declaim (ftype (function ((or pathname string)
-                           &rest t &key (:output-file t) &allow-other-keys)
-                          (values t t t))
-                compile-file*))
+(defvar *compile-op-compile-file-function* 'compile-file*)
 
 ;;; perform is required to check output-files to find out where to put
 ;;; its answers, in case it has been overridden for site policy
@@ -1916,7 +1918,8 @@ recursive calls to traverse.")
         (*compile-file-warnings-behaviour* (operation-on-warnings operation))
         (*compile-file-failure-behaviour* (operation-on-failure operation)))
     (multiple-value-bind (output warnings-p failure-p)
-        (apply #'compile-file* source-file :output-file output-file
+        (apply *compile-op-compile-file-function*
+               source-file :output-file output-file
                (compile-op-flags operation))
       (when warnings-p
         (case (operation-on-warnings operation)
@@ -2528,7 +2531,7 @@ located."
 (defparameter *implementation-features*
   '((:acl :allegro)
     (:lw :lispworks)
-    (:digitool) ; before clozure, so it won't get preempted by ccl
+    (:mcl :digitool) ; before clozure, so it won't get preempted by ccl
     (:ccl :clozure)
     (:corman :cormanlisp)
     (:abcl :armedbear)
@@ -2570,13 +2573,12 @@ located."
                        (:+ics ""))
                       (if (member :64bit *features*) "-64bit" ""))
     #+armedbear (format nil "~a-fasl~a" s system::*fasl-version*)
-    #+clisp (subseq s 0 (position #\space s))
+    #+clisp (subseq s 0 (position #\space s)) ; strip build information (date, etc.)
     #+clozure (format nil "~d.~d-f~d" ; shorten for windows
                       ccl::*openmcl-major-version*
                       ccl::*openmcl-minor-version*
                       (logand ccl::fasl-version #xFF))
     #+cmu (substitute #\- #\/ s)
-    #+digitool (subseq s 8)
     #+ecl (format nil "~A~@[-~A~]" s
                   (let ((vcs-id (ext:lisp-implementation-vcs-id)))
                     (when (>= (length vcs-id) 8)
@@ -2585,8 +2587,9 @@ located."
     #+lispworks (format nil "~A~@[~A~]" s
                         (when (member :lispworks-64bit *features*) "-64bit"))
     ;; #+sbcl (format nil "~a-fasl~d" s sb-fasl:+fasl-file-version+) ; f-f-v redundant w/ version
-    #+(or cormanlisp mcl sbcl scl) s
-    #-(or allegro armedbear clisp clozure cmu cormanlisp digitool
+    #+mcl (subseq s 8) ; strip the leading "Version "
+    #+(or cormanlisp sbcl scl) s
+    #-(or allegro armedbear clisp clozure cmu cormanlisp
           ecl gcl lispworks mcl sbcl scl) s))
 
 (defun* first-feature (features)
@@ -2736,7 +2739,7 @@ located."
 (defun* directory* (pathname-spec &rest keys &key &allow-other-keys)
   (apply 'directory pathname-spec
          (append keys '#.(or #+allegro '(:directories-are-files nil :follow-symbolic-links nil)
-                             #+ccl '(:follow-links nil)
+                             #+clozure '(:follow-links nil)
                              #+clisp '(:circle t :if-does-not-exist :ignore)
                              #+(or cmu scl) '(:follow-links nil :truenamep nil)
                              #+sbcl (when (find-symbol "RESOLVE-SYMLINKS" "SB-IMPL") '(:resolve-symlinks nil))))))
@@ -3215,6 +3218,20 @@ effectively disabling the output translation facility."
          (setf output-truename nil)))
       (values output-truename warnings-p failure-p))))
 
+#+(and ecl (not ecl-bytecmp))
+(setf
+ *compile-op-compile-file-function*
+ (lambda (input-file &rest keys &key output-file &allow-other-keys)
+   (declare (ignore output-file))
+   (multiple-value-bind (object-file flags1 flags2)
+       (apply 'compile-file* input-file :system-p t keys)
+     (values (and object-file
+                  (c::build-fasl (compile-file-pathname object-file :type :fasl)
+                                 :lisp-files (list object-file))
+                  object-file)
+             flags1
+             flags2))))
+
 #+abcl
 (defun* translate-jar-pathname (source wildcard)
   (declare (ignore wildcard))
@@ -3405,8 +3422,8 @@ with a different configuration, so the configuration would be re-read then."
          (dirs
           #-cormanlisp
           (ignore-errors
-            (directory* wild . #.(or #+ccl '(:directories t :files nil)
-                                     #+digitool '(:directories t))))
+            (directory* wild . #.(or #+clozure '(:directories t :files nil)
+                                     #+mcl '(:directories t))))
           #+cormanlisp (cl::directory-subdirs directory))
          #+(or abcl allegro lispworks scl)
          (dirs (remove-if-not #+abcl #'extensions:probe-directory
@@ -3697,17 +3714,6 @@ with a different configuration, so the configuration would be re-read then."
 ;;;; Things to do in case we're upgrading from a previous version of ASDF.
 ;;;; See https://bugs.launchpad.net/asdf/+bug/485687
 ;;;;
-;;;; TODO: debug why it's not enough to upgrade from ECL <= 9.11.1
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  #+ecl ;; Support upgrade from before ECL went to 1.369
-  (when (fboundp 'compile-op-system-p)
-    (defmethod compile-op-system-p ((op compile-op))
-      (getf :system-p (compile-op-flags op)))
-    (defmethod initialize-instance :after ((op compile-op)
-                                           &rest initargs
-                                           &key system-p &allow-other-keys)
-      (declare (ignorable initargs))
-      (when system-p (appendf (compile-op-flags op) (list :system-p system-p))))))
 
 ;;; If a previous version of ASDF failed to read some configuration, try again.
 (when *ignored-configuration-form*

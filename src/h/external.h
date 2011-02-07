@@ -543,6 +543,7 @@ extern ECL_API cl_object _ecl_bclosure_dispatch(cl_narg narg, ...);
 
 extern ECL_API cl_object si_bc_disassemble(cl_object v);
 extern ECL_API cl_object si_bc_split(cl_object v);
+extern ECL_API cl_object si_bc_join(cl_object lex, cl_object code, cl_object data, cl_object name);
 
 /* error.c */
 
@@ -901,6 +902,7 @@ extern ECL_API cl_object cl_adjoin _ARGS((cl_narg narg, cl_object item, cl_objec
 extern ECL_API cl_object cl_pairlis _ARGS((cl_narg narg, cl_object keys, cl_object data, ...));
 extern ECL_API cl_object cl_rassoc _ARGS((cl_narg narg, cl_object item, cl_object alist, ...));
 extern ECL_API cl_object cl_assoc _ARGS((cl_narg narg, cl_object item, cl_object alist, ...));
+extern ECL_API cl_object si_proper_list_p(cl_object V1);
 
 extern ECL_API cl_object ecl_last(cl_object x, cl_index n);
 extern ECL_API cl_object ecl_butlast(cl_object x, cl_index n);
@@ -2046,6 +2048,10 @@ extern ECL_API cl_object cl_sort _ARGS((cl_narg narg, cl_object V1, cl_object V2
 extern ECL_API cl_object cl_stable_sort _ARGS((cl_narg narg, cl_object V1, cl_object V2, ...));
 extern ECL_API cl_object cl_merge _ARGS((cl_narg narg, cl_object V1, cl_object V2, cl_object V3, cl_object V4, ...));
 extern ECL_API cl_object cl_constantly(cl_object V1);
+
+/* trace.lsp */
+
+extern ECL_API cl_object si_traced_old_definition(cl_object V1);
 
 /* pprint.lsp */
 
