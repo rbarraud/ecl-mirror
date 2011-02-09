@@ -19,18 +19,28 @@ export RANLIB=$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linu
 
 
 base_config_opts="\
-	--disable-soname \
-    	--disable-shared \
-	--enable-unicode \
+        --with-cross-config=$ECLROOT/cross_config_android \
+	--disable-longdouble \
+	--enable-unicode=yes \
+        --enable-boehm=included \
 	--enable-threads=yes \
+	--with-debug-cflags=yes \
+	--with-clx=no \
+	--with-serve-event=no \
+	--with-tcp=builtin \
+	--with-x=no \
+	--with-rt=no \
+	--with-defsystem=no \
+	--with-fpe=yes \
+	--with-profile=no \
+	--with-dffi=no \
 	--with-asdf=no \
 	--with-bytecmp=builtin \
 	--with-cmp=no \
-	--with-clx=no \
-	--with-debug-cflags=yes \
-	--with-serve-event=no \
-	--with-tcp=builtin \
-	--with-x=no"
+	--disable-soname \
+    	--disable-shared"
+
+
 
 
 ./configure --host=arm-linux-eabi $base_config_opts $*

@@ -5,19 +5,20 @@ host_config_opts="\
 	--enable-unicode=yes \
         --enable-boehm=included \
 	--enable-threads=yes \
-	--with-asdf=yes \
-	--with-bytecmp=builtin \
-	--with-cmp=builtin \
-	--with-clx=no \
 	--with-debug-cflags=yes \
+	--with-clx=no \
+	--with-serve-event=no \
+	--with-tcp=builtin \
+	--with-x=no \
+	--with-rt=no \
 	--with-defsystem=no \
 	--with-fpe=yes \
 	--with-profile=no \
-	--with-rt=no \
-	--with-serve-event=yes \
-	--with-tcp=yes \
-	--with-x=no \
-	--with-dffi=no"
+	--with-dffi=no \
+	--with-asdf=yes \
+	--with-bytecmp=builtin \
+	--with-cmp=builtin"
+
 
 
 ./configure $host_config_opts $*
