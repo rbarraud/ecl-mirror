@@ -32,9 +32,28 @@ ECL_NEWLINE=LF
 ###          2 = (f)->_r
 ###          3 = (f)->_cnt
 ECL_FILE_CNT=0
+# ECL_NEWLINE=LF
 
-### 1.6) How many bits constitute a long long?
+###
+### 1.6) Other integer types (set to 'no' to disable)
+###
+# ECL_STDINT_HEADER="#include <stdint.h>"
+# ECL_UINT8_T=uint8_t
+# ECL_UINT16_T=uint16_t
+# ECL_UINT32_T=uint32_t
+# ECL_UINT64_T=no
+# ECL_INT8_T=int8_t
+# ECL_INT16_T=int16_t
+# ECL_INT32_T=int32_t
+# ECL_INT64_T=no
+# ECL_LONG_LONG_BITS=no
 ECL_LONG_LONG_BITS=64
+
+###
+### 1.7) Other features (set to 'no' to disable)
+###
+ECL_WORKING_SEM_INIT=no
+ECL_WORKING_ENVIRON=yes
 
 ### 2) To cross-compile ECL so that it runs on the system
 ###		arm-apple-darwin
