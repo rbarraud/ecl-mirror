@@ -1,8 +1,13 @@
 #!/bin/bash
 
+export CC="gcc"
+export CFLAGS="-m32"
+export LDFLAGS="-m32"
+export ABI=32
+
 host_config_opts="\
 	--disable-longdouble \
-	--enable-unicode=yes \
+	--enable-unicode=no \
         --enable-boehm=included \
 	--enable-threads=yes \
 	--with-debug-cflags=yes \

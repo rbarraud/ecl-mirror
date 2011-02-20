@@ -21,7 +21,7 @@ export RANLIB=$ANDROID_ROOT/toolchains/arm-linux-androideabi-4.4.3/prebuilt/linu
 base_config_opts="\
         --with-cross-config=$ECLROOT/cross_config_android \
 	--disable-longdouble \
-	--enable-unicode=yes \
+	--enable-unicode=no \
         --enable-boehm=included \
 	--enable-threads=yes \
 	--with-debug-cflags=yes \
