@@ -1,0 +1,104 @@
+#!/bin/bash
+
+usage()
+{
+    echo "Usage: `basename $0` platform"
+    echo ""
+    echo " platform    -- one of: host, iPhoneOS, iPhoneSimulator, android, androidx86"
+}
+
+[ $# == 1 ] || { usage; exit 1; }
+
+
+platform=$1
+ECLROOT=$(cd $(dirname ${0}) && pwd -P)
+
+#include the variable definitions 
+. $ECLROOT/scripts.conf
+GMP_INSTALL_DIR=$GMP_INSTALL_ROOT_DIR/$platform
+ECL_INSTALL_DIR=$ECL_INSTALL_ROOT_DIR/$platform
+
+template_config=platforms/$platform/cross_config.in
+srcdir=$ECLROOT/src
+ecl_to_run=$ECL_INSTALL_ROOT_DIR/host/bin/ecl
+host_platform=$($ECLROOT/src/config.guess)
+
+builddir=$ECLROOT/build/$platform/ecl
+
+if [ ! -d ${builddir} ] ; then
+    echo Creating directory "\`${builddir}'"
+    mkdir -p ${builddir}
+fi
+
+case $platform in
+    android|androidx86)
+	. $ECLROOT/platforms/android/config.sh $platform || exit 1
+	;;
+    iPhoneOS|iPhoneSimulator)
+	. $ECLROOT/platforms/$platform/config.sh || exit 1
+	;;
+esac
+
+case $platform in
+    android|androidx86|iPhoneOS|iPhoneSimulator)
+	(cat $template_config; echo "ECL_TO_RUN=$ecl_to_run") > $builddir/cross_config
+	config_opts="\
+	--host=${host} --target=${target} \
+	--with-cross-config=$builddir/cross_config \
+	--with-gmp-prefix=$GMP_INSTALL_DIR \
+	--enable-threads=yes \
+	--disable-longdouble \
+	--enable-boehm=included \
+	--with-dffi=included \
+	--with-cmp=no \
+	--with-asdf=builtin \
+	--with-bytecmp=builtin \
+	--with-serve-event=yes \
+	--disable-shared \
+	--enable-ltdl"
+	;;
+
+    host)
+	export CFLAGS="-m32"
+	export LDFLAGS="-m32"
+	export ABI=32
+
+	config_opts="\
+	--with-gmp-prefix=$GMP_INSTALL_DIR \
+	--enable-threads=yes \
+	--disable-longdouble \
+        --enable-boehm=included \
+	--with-dffi=included"
+	;;
+
+    host64)
+	config_opts="\
+	--with-gmp-prefix=$GMP_INSTALL_DIR \
+	--enable-threads=yes \
+	--enable-boehm=included \
+	--with-dffi=included"
+	;;
+
+    host64nodl)
+	config_opts="\
+	--with-gmp-prefix=$GMP_INSTALL_DIR \
+	--enable-threads=yes \
+	--enable-boehm=included \
+	--with-dffi=included \
+	--with-cmp=builtin \
+    	--disable-shared"
+	;;
+    *) 
+	usage; exit 1
+	;;
+esac
+
+
+cd ${builddir}
+${srcdir}/configure --srcdir=${srcdir} --prefix=$ECL_INSTALL_DIR ${config_opts}
+
+if [[ $? == 0 ]]; then
+    echo "Configure done in ${builddir}."
+    echo "To build do:"
+    echo "cd ${builddir}; make && make install"
+fi

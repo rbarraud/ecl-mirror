@@ -1,0 +1,47 @@
+GMP_INSTALL_ROOT_DIR=/opt/gmp
+ECL_INSTALL_ROOT_DIR=/opt/ecl
+
+TARGETS=host64 host iPhoneOS iPhoneSimulator android androidx86
+TARGETS_ECL=$(TARGETS:=.ecl)
+TARGETS_GMP=$(TARGETS:=.gmp)
+
+.PHONY: all clean
+
+all: $(TARGETS_ECL) $(TARGETS_GMP)
+
+iPhoneSimulator: iPhoneSimulator.ecl
+
+iPhoneOS: iPhoneOS.ecl
+
+ios: iPhoneOS iPhoneSimulator
+
+android: android.ecl
+
+androidx86: androidx86.ecl
+
+iPhoneOS.ecl iPhoneSimulator.ecl android.ecl androidx86.ecl : host.ecl
+
+%.ecl: %.gmp
+	-rm -rf build/$(@:.ecl=)/ecl
+	./configure_cross $(@:.ecl=)
+	cd build/$(@:.ecl=)/ecl && make
+	-rm -rf $(ECL_INSTALL_ROOT_DIR)/$(@:.ecl=)
+	cd build/$(@:.ecl=)/ecl && make install
+
+	touch $@
+
+%.gmp:
+	-rm -rf build/$(@:.gmp=)/gmp
+	./configure_gmp_cross $(@:.gmp=)
+	cd build/$(@:.gmp=)/gmp && make
+	-rm -rf $(GMP_INSTALL_ROOT_DIR)/$(@:.gmp=)
+	cd build/$(@:.gmp=)/gmp && make install
+
+	touch $@
+
+
+
+clean:
+	rm -f *.ecl *.gmp
+
+

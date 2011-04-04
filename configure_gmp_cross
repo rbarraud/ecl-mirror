@@ -1,0 +1,87 @@
+#!/bin/bash
+
+usage()
+{
+    echo "Usage: `basename $0` platform"
+    echo ""
+    echo " platform    -- one of: host, iPhoneOS, iPhoneSimulator, android, androidx86"
+}
+
+[[ $# == 1 ]] || { usage; exit 1; }
+
+ECLROOT=$(cd $(dirname ${0}) && pwd -P)
+
+platform=$1
+#include the variable definitions 
+. scripts.conf
+GMP_INSTALL_DIR=$GMP_INSTALL_ROOT_DIR/$platform
+
+if [[ "$(uname -s)" == Darwin || ! -z "$MPIR_SRC_DIR" ]]; then
+    if [[ ! -d "$MPIR_SRC_DIR" ]]; then
+	echo "Cannot find MPIR source (needed if building on Mac OS)"
+	echo "please download and extract http://www.mpir.org/mpir-2.5.1.tar.bz2"
+	echo "and do:"
+	echo "export MPIR_SRC_DIR=/path/to/mpir-2.5.1"
+	exit 1
+    else
+	srcdir=$MPIR_SRC_DIR
+    fi
+else
+    srcdir=$ECLROOT/src/gmp
+fi
+
+#srcdir=$ECLROOT/../mpir-2.5.1
+host=$(${srcdir}/config.guess)
+
+builddir=$ECLROOT/build/$platform/gmp
+
+case $platform in
+    android|androidx86)
+	. $ECLROOT/platforms/android/config.sh $platform || exit 1
+	;;
+    iPhoneOS|iPhoneSimulator)
+	. $ECLROOT/platforms/$platform/config.sh || exit 1
+	;;
+esac
+
+if [ ! -d ${builddir} ] ; then
+    echo Creating directory "\`${builddir}'"
+    mkdir -p ${builddir}
+fi
+
+if grep -q MPIR $srcdir/Changelog; then
+    echo "Using MPIR library"
+    base_config_opt="--enable-gmpcompat"
+    echo "Copying patched invert_limb.asm to MPIR source directory"
+    cp $ECLROOT/src/gmp/mpn/arm/invert_limb.asm $srcdir/mpn/arm/invert_limb.asm
+fi
+
+base_config_opts="\
+        --disable-shared \
+	${base_config_opt}"
+
+case $platform in
+    host)
+	base_config_opts="\
+	--with-pic \
+	${base_config_opt}"
+
+	# MPIR-2.5.1: must use applenopic on sandybridge
+	if [[ "$host" == "sandybridge-apple-darwin"* ]]; then 
+	    host=core2-apple-darwin
+	fi
+
+	export CFLAGS="-m32"
+	export LDFLAGS="-m32"
+	export ABI=32
+	;;
+    host64)
+	base_config_opts="\
+	--with-pic \
+	${base_config_opt}"
+	;;
+esac
+
+cd ${builddir}
+${srcdir}/configure --srcdir=${srcdir} --prefix=$GMP_INSTALL_DIR --host=${host} --target=${target} $base_config_opts
+
