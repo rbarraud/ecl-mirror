@@ -96,6 +96,10 @@ $(ECL_CMPDIR)/cmpdefs.lsp: $(ECL_CMPDIR)/cmpdefs.pre
 	sed -e 's,@ecldir\\@,"$(ecldir)",g' \
 	    -e 's,@libdir\\@,"$(libdir)",g' \
 	    -e 's,@includedir\\@,"$(includedir)",g' < $(ECL_CMPDIR)/cmpdefs.pre > $@
+$(ECL_CMPDIR)/crosscmp.lsp: $(ECL_CMPDIR)/crosscmp.pre
+	sed -e 's,@ecldir\\@,$(ecldir),g' \
+	    -e 's,@libdir\\@,$(libdir),g' \
+	    -e 's,@includedir\\@,$(includedir),g' < $(ECL_CMPDIR)/crosscmp.pre > $@
 compile.lsp: compile.pre
 	sed -e 's,@ecldir\\@,$(ecldir),g' \
 	    -e 's,@libdir\\@,$(libdir),g' < compile.pre > compile.lsp
@@ -105,7 +109,7 @@ bin/ecl-config: bin/ecl-config.pre
 	    -e 's,~A,$(libdir),' bin/ecl-config.pre > bin/ecl-config
 
 
-@LIBPREFIX@eclmin.@LIBEXT@: @LIBPREFIX@eclgmp.@LIBEXT@ @LIBPREFIX@eclatomic.@LIBEXT@ @LIBPREFIX@eclgc.@LIBEXT@ @LIBPREFIX@eclffi.@LIBEXT@ lsp/config.lsp $(ECL_CMPDIR)/cmpdefs.lsp ecl/external.h $(top_srcdir)/c/*.d
+@LIBPREFIX@eclmin.@LIBEXT@: @LIBPREFIX@eclgmp.@LIBEXT@ @LIBPREFIX@eclatomic.@LIBEXT@ @LIBPREFIX@eclgc.@LIBEXT@ @LIBPREFIX@eclffi.@LIBEXT@ lsp/config.lsp $(ECL_CMPDIR)/cmpdefs.lsp $(ECL_CMPDIR)/crosscmp.lsp ecl/external.h $(top_srcdir)/c/*.d
 	cd c; $(MAKE)
 @LIBPREFIX@eclgc.@LIBEXT@:
 	test -d ecl/gc || mkdir ecl/gc
@@ -199,6 +203,7 @@ install:
 	$(mkinstalldirs) $(DESTDIR)$(mandir)/man$(manext)
 	$(INSTALL_DATA) doc/ecl.man $(DESTDIR)$(mandir)/man$(manext)/ecl.$(manext)
 	$(INSTALL_DATA) doc/ecl-config.man $(DESTDIR)$(mandir)/man$(manext)/ecl-config.$(manext)
+	$(INSTALL_DATA) cmp/crosscmp.lsp $(DESTDIR)$(libdir)
 
 flatinstall: build-stamp
 	$(MAKE) DESTDIR=$(DESTDIR) bindir=$(prefix) libdir=$(prefix) \

@@ -86,7 +86,7 @@ dnl Set up a configuration file for the case when we are cross-
 dnl compiling
 dnl
 AC_DEFUN(ECL_CROSS_CONFIG,[
-if test "x${cross_compiling}" = "xyes"; then
+if test "x${cross_compiling}" = "xyes" || test "x${force_cross_compiling}" = "xyes"; then
   if test -n "${with_cross_config}" -a -f "${with_cross_config}"; then
     . ${with_cross_config}
   elif test -f ./cross_config; then
@@ -260,12 +260,28 @@ case "${host_os}" in
 		THREAD_LIBS='-lpthread'
 		SHARED_LDFLAGS="-shared ${LDFLAGS}"
 		BUNDLE_LDFLAGS="-shared ${LDFLAGS}"
+		ECL_GC_DIR=gc-unstable
 		ECL_LDRPATH='-Wl,--rpath,~A'
 		clibs="-ldl"
 		# Maybe CFLAGS="-D_ISOC99_SOURCE ${CFLAGS}" ???
 		CFLAGS="-D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 ${CFLAGS}"
 		SONAME="${SHAREDPREFIX}ecl.${SHAREDEXT}.SOVERSION"
 		SONAME_LDFLAGS="-Wl,-soname,SONAME"
+		;;
+	*eabi*)
+		thehost='android'
+		THREAD_CFLAGS='-D_THREAD_SAFE'
+#		THREAD_LIBS='-lpthread'
+		SHARED_LDFLAGS="-shared ${LDFLAGS}"
+		BUNDLE_LDFLAGS="-shared ${LDFLAGS}"
+		ECL_GC_DIR=gc-unstable
+		ECL_LDRPATH='-Wl,--rpath,~A'
+		clibs="-ldl"
+		# Maybe CFLAGS="-D_ISOC99_SOURCE ${CFLAGS}" ???
+		CFLAGS="-D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -DANDROID -DPLATFORM_ANDROID -DUSE_GET_STACKBASE_FOR_MAIN -DIGNORE_DYNAMIC_LOADING -DAO_REQUIRE_CAS ${CFLAGS}"
+		SONAME="${SHAREDPREFIX}ecl.${SHAREDEXT}.SOVERSION"
+		SONAME_LDFLAGS="-Wl,-soname,SONAME"
+		ECL_ADD_FEATURE([android])
 		;;
 	gnu*)
 		thehost='gnu'
@@ -427,6 +443,14 @@ case "${host_os}" in
 		shared="no"
 		;;
 esac
+
+case "${host}" in
+	i686*-android*)
+		THREAD_LIBS=''
+		CFLAGS="-D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -DANDROID -DPLATFORM_ANDROID -DUSE_GET_STACKBASE_FOR_MAIN -DIGNORE_DYNAMIC_LOADING -DNO_GETCONTEXT -DHAVE_GETTIMEOFDAY -DHAVE_SIGPROCMASK ${CFLAGS}"
+		ECL_ADD_FEATURE([android])
+esac
+
 case "${host_cpu}" in
 	alpha*)
 		CFLAGS="${CFLAGS} -mieee";;
@@ -853,7 +877,7 @@ dnl ----------------------------------------------------------------------
 dnl Check "char **environ" is available
 AC_DEFUN([ECL_POSIX_ENVIRON],[
 AC_MSG_CHECKING(working environ)
-if test -z "$ECL_WORKING_ENVIRON"; then
+if test -z "$ECL_WORKING_ENVIRON" && test "x${cross_compiling}" != "xyes"; then
   AC_RUN_IFELSE([AC_LANG_SOURCE([[
 #include <stdlib.h>
 extern char **environ;
@@ -862,6 +886,8 @@ int main() {
     exit(0);
   exit(1);
 }]])],[ECL_WORKING_ENVIRON=yes],[ECL_WORKING_ENVIRON=no],[])
+elif test "x${cross_compiling}" != "xyes"; then
+ECL_WORKING_ENVIRON=yes
 fi
 AC_MSG_RESULT([$ECL_WORKING_ENVIRON])
 if test $ECL_WORKING_ENVIRON = yes ; then
