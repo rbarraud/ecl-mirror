@@ -1154,6 +1154,8 @@ cl_symbols[] = {
 {SYS_ "POINTER","si_pointer"},
 #ifndef ECL_CMU_FORMAT
 {SYS_ "PRETTY-PRINT-FORMAT",NULL},
+#else
+{SYS_ "PRETTY-PRINT-FORMAT", NULL},
 #endif
 {SYS_ "PROCESS-DECLARATIONS","si_process_declarations"},
 {SYS_ "PROCESS-LAMBDA","si_process_lambda"},
@@ -1177,6 +1179,8 @@ cl_symbols[] = {
 {SYS_ "SET-SYMBOL-PLIST","si_set_symbol_plist"},
 #if defined(HAVE_PUTENV) || defined(HAVE_SETENV)
 {EXT_ "SETENV","si_setenv"},
+#else
+{EXT_ "SETENV",NULL},
 #endif
 {SYS_ "SETF-LAMBDA",NULL},
 {SYS_ "SETF-METHOD",NULL},
@@ -1230,6 +1234,8 @@ cl_symbols[] = {
 
 #ifdef PROFILE
 {SYS_ "*PROFILE-ARRAY*",NULL},
+#else
+{SYS_ "*PROFILE-ARRAY*",NULL},
 #endif
 
 {EXT_ "*SOURCE-LOCATION*",NULL},
@@ -1240,6 +1246,10 @@ cl_symbols[] = {
 {SYS_ "PROFILE","si_profile"},
 {SYS_ "CLEAR-PROFILE","si_clear_profile"},
 {SYS_ "DISPLAY-PROFILE","si_display_profile"},
+#else
+{SYS_ "PROFILE",NULL},
+{SYS_ "CLEAR-PROFILE",NULL},
+{SYS_ "DISPLAY-PROFILE",NULL},
 #endif /* PROFILE */
 
 #ifdef TCP
@@ -1464,6 +1474,8 @@ cl_symbols[] = {
 {SYS_ "C-ULONG-LONG-MAX",NULL}, /* See main.d */
 #ifdef ecl_long_long_t
 {SYS_ "C-LONG-LONG-BIT",NULL},
+#else
+{SYS_ "C-LONG-LONG-BIT", NULL},
 #endif
 #ifdef GBC_BOEHM
 {SYS_ "GC","si_gc"},
@@ -1653,6 +1665,8 @@ cl_symbols[] = {
 
 #ifdef ENABLE_DLOPEN
 {SYS_ "LOAD-BINARY","si_load_binary"},
+#else
+{SYS_ "LOAD-BINARY",NULL},
 #endif
 
 {SYS_ "*CODE-WALKER*",NULL},
@@ -1661,6 +1675,10 @@ cl_symbols[] = {
 {SYS_ "CALL-CFUN","si_call_cfun"},
 {KEY_ "CALLBACK",NULL},
 {SYS_ "MAKE-DYNAMIC-CALLBACK","si_make_dynamic_callback"},
+#else
+{SYS_ "CALL-CFUN",NULL},
+{KEY_ "CALLBACK",NULL},
+{SYS_ "MAKE-DYNAMIC-CALLBACK",NULL},
 #endif
 {KEY_ "CDECL",NULL},
 {KEY_ "STDCALL",NULL},
@@ -1687,12 +1705,20 @@ cl_symbols[] = {
 {SYS_ "FIND-RELATIVE-PACKAGE","si_find_relative_package"},
 {SYS_ "PACKAGE-PARENT",NULL},
 {SYS_ "PACKAGE-CHILDREN",NULL},
+#else
+{SYS_ "*RELATIVE-PACKAGE-NAMES*",NULL},
+{KEY_ "RELATIVE-PACKAGE-NAMES",NULL},
+{SYS_ "FIND-RELATIVE-PACKAGE",NULL},
+{SYS_ "PACKAGE-PARENT",NULL},
+{SYS_ "PACKAGE-CHILDREN",NULL},
 #endif
 
 {SYS_ "WRONG-TYPE-ARGUMENT",NULL},
 
 #ifdef GBC_BOEHM
 {SYS_ "GC-STATS","si_gc_stats"},
+#else
+{SYS_ "GC-STATS",NULL},
 #endif
 
 {SYS_ "*CURRENT-FORM*",NULL},

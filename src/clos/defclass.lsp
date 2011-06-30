@@ -118,7 +118,7 @@
       (setf (find-class name) new-class))
     new-class))
 
-#+cross
+#+nil
 (eval-when (compile)
   (defun ensure-class (name &rest initargs)
     (warn "Ignoring definition for class ~S" name)))

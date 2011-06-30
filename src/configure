@@ -8990,10 +8990,7 @@ fi
 
 
 if test "$cross_compiling" = yes; then :
-  { { $as_echo "$as_me:${as_lineno-$LINENO}: error: in \`$ac_pwd':" >&5
-$as_echo "$as_me: error: in \`$ac_pwd':" >&2;}
-as_fn_error $? "cannot run test program while cross compiling
-See \`config.log' for more details" "$LINENO" 5; }
+    :
 else
   cat confdefs.h - <<_ACEOF >conftest.$ac_ext
 /* end confdefs.h.  */
@@ -9146,6 +9143,10 @@ else
   CLX_INFO=""
 fi
 
+if test "${with_tcp}" = "builtin"; then
+    LSP_FEATURES="(cons :builtin-sockets ${LSP_FEATURES})"
+    with_tcp=yes
+fi
 if test "${with_tcp}" = "yes"; then
 
 $as_echo "#define TCP 1" >>confdefs.h

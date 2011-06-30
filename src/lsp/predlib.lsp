@@ -39,7 +39,7 @@ Builds a new function which accepts any number of arguments but always outputs N
   (si:fill-array-with-elt *upgraded-array-element-type-cache* nil 0 nil))
 
 (defun create-type-name (name)
-  (when (member name *alien-declarations*)
+  (when (and (boundp '*alien-declarations*) (member name *alien-declarations*))
     (error "Symbol ~s is a declaration specifier and cannot be used to name a new type" name)))
 
 (defun do-deftype (name form function)
