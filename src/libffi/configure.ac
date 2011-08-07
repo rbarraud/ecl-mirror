@@ -1,14 +1,16 @@
 dnl Process this with autoconf to create configure
 
-AC_PREREQ(2.63)
+AC_PREREQ(2.68)
 
-AC_INIT([libffi], [3.0.10rc0], [http://gcc.gnu.org/bugs.html])
+AC_INIT([libffi], [3.0.11], [http://github.com/atgreen/libffi/issues])
 AC_CONFIG_HEADERS([fficonfig.h])
 
 AC_CANONICAL_SYSTEM
 target_alias=${target_alias-$host_alias}
 
 . ${srcdir}/configure.host
+
+AX_ENABLE_BUILDDIR
 
 AM_INIT_AUTOMAKE
 
@@ -34,6 +36,12 @@ AM_PROG_CC_C_O
 AC_PROG_LIBTOOL
 AC_CONFIG_MACRO_DIR([m4])
 
+AX_CC_MAXOPT
+AX_CFLAGS_WARN_ALL
+if test "x$GCC" = "xyes"; then
+  CFLAGS="$CFLAGS -fexceptions"
+fi
+
 AM_MAINTAINER_MODE
 
 AC_CHECK_HEADERS(sys/mman.h)
@@ -41,7 +49,7 @@ AC_CHECK_FUNCS(mmap)
 AC_FUNC_MMAP_BLACKLIST
 
 dnl The -no-testsuite modules omit the test subdir.
-dnl AM_CONDITIONAL(TESTSUBDIR, test -d $srcdir/testsuite)
+AM_CONDITIONAL(TESTSUBDIR, test -d $srcdir/testsuite)
 
 TARGETDIR="unknown"
 case "$host" in
@@ -67,6 +75,10 @@ case "$host" in
 	TARGET=AVR32; TARGETDIR=avr32
 	;;
 
+  bfin*)
+  	TARGET=BFIN; TARGETDIR=bfin
+  	;;
+
   cris-*-*)
 	TARGET=LIBFFI_CRIS; TARGETDIR=cris
 	;;
@@ -75,7 +87,7 @@ case "$host" in
 	TARGET=FRV; TARGETDIR=frv
 	;;
 
-  hppa*-*-linux* | parisc*-*-linux*)
+  hppa*-*-linux* | parisc*-*-linux* | hppa*-*-openbsd*)
 	TARGET=PA_LINUX; TARGETDIR=pa
 	;;
   hppa*64-*-hpux*)
@@ -88,10 +100,17 @@ case "$host" in
   i?86-*-freebsd* | i?86-*-openbsd*)
 	TARGET=X86_FREEBSD; TARGETDIR=x86
 	;;
-  i?86-win32* | i?86-*-cygwin* | i?86-*-mingw* | i?86-*-os2*)
+  i?86-win32* | i?86-*-cygwin* | i?86-*-mingw* | i?86-*-os2* | i?86-*-interix*)
 	TARGET=X86_WIN32; TARGETDIR=x86
-	# All mingw/cygwin/win32 builds require this for sharedlib
-	AM_LTLDFLAGS="-no-undefined"
+	# All mingw/cygwin/win32 builds require -no-undefined for sharedlib.
+	# We must also check with_cross_host to decide if this is a native
+	# or cross-build and select where to install dlls appropriately.
+	if test -n "$with_cross_host" &&
+	   test x"$with_cross_host" != x"no"; then
+	  AM_LTLDFLAGS='-no-undefined -bindir "$(toolexeclibdir)"';
+	else
+	  AM_LTLDFLAGS='-no-undefined -bindir "$(bindir)"';
+	fi
 	;;
   i?86-*-darwin*)
 	TARGET=X86_DARWIN; TARGETDIR=x86
@@ -100,7 +119,7 @@ case "$host" in
 	TARGET=X86_64; TARGETDIR=x86
 	;;
   i?86-*-*)
-	TARGET=X86; TARGETDIR=x86
+	TARGET=X86_64; TARGETDIR=x86
 	;;
 
   ia64*-*-*)
@@ -115,31 +134,38 @@ case "$host" in
 	TARGET=M68K; TARGETDIR=m68k
 	;;
 
-  mips-sgi-irix5.* | mips-sgi-irix6.*)
+  mips-sgi-irix5.* | mips-sgi-irix6.* | mips*-*-rtems*)
 	TARGET=MIPS; TARGETDIR=mips
 	;;
-  mips*-*-linux*)
+  mips*-*-linux* | mips*-*-openbsd*)
 	# Support 128-bit long double for NewABI.
 	HAVE_LONG_DOUBLE='defined(__mips64)'
 	TARGET=MIPS; TARGETDIR=mips
 	;;
 
+  moxie-*-*)
+        TARGET=MOXIE; TARGETDIR=moxie
+	;;
+
   powerpc*-*-linux* | powerpc-*-sysv*)
+	TARGET=POWERPC; TARGETDIR=powerpc
+	;;
+  powerpc-*-amigaos*)
 	TARGET=POWERPC; TARGETDIR=powerpc
 	;;
   powerpc-*-beos*)
 	TARGET=POWERPC; TARGETDIR=powerpc
 	;;
-  powerpc-*-darwin*)
+  powerpc-*-darwin* | powerpc64-*-darwin*)
 	TARGET=POWERPC_DARWIN; TARGETDIR=powerpc
 	;;
   powerpc-*-aix* | rs6000-*-aix*)
 	TARGET=POWERPC_AIX; TARGETDIR=powerpc
 	;;
-  powerpc-*-freebsd*)
+  powerpc-*-freebsd* | powerpc-*-openbsd*)
 	TARGET=POWERPC_FREEBSD; TARGETDIR=powerpc
 	;;
- powerpc64-*-freebsd*)
+  powerpc64-*-freebsd*)
 	TARGET=POWERPC; TARGETDIR=powerpc
 	;;
   powerpc*-*-rtems*)
@@ -167,6 +193,15 @@ case "$host" in
 
   x86_64-*-cygwin* | x86_64-*-mingw*)
 	TARGET=X86_WIN64; TARGETDIR=x86
+	# All mingw/cygwin/win32 builds require -no-undefined for sharedlib.
+	# We must also check with_cross_host to decide if this is a native
+	# or cross-build and select where to install dlls appropriately.
+	if test -n "$with_cross_host" &&
+	   test x"$with_cross_host" != x"no"; then
+	  AM_LTLDFLAGS='-no-undefined -bindir "$(toolexeclibdir)"';
+	else
+	  AM_LTLDFLAGS='-no-undefined -bindir "$(bindir)"';
+	fi
 	;;
 
   x86_64-*-*)
@@ -182,6 +217,7 @@ if test $TARGETDIR = unknown; then
 fi
 
 AM_CONDITIONAL(MIPS, test x$TARGET = xMIPS)
+AM_CONDITIONAL(BFIN, test x$TARGET = xBFIN)
 AM_CONDITIONAL(SPARC, test x$TARGET = xSPARC)
 AM_CONDITIONAL(X86, test x$TARGET = xX86)
 AM_CONDITIONAL(X86_FREEBSD, test x$TARGET = xX86_FREEBSD)
@@ -230,17 +266,7 @@ AC_SUBST(HAVE_LONG_DOUBLE)
 
 AC_C_BIGENDIAN
 
-AC_CACHE_CHECK([assembler .cfi pseudo-op support],
-    libffi_cv_as_cfi_pseudo_op, [
-    libffi_cv_as_cfi_pseudo_op=unknown
-    AC_TRY_COMPILE([asm (".cfi_startproc\n\t.cfi_endproc");],,
-		   [libffi_cv_as_cfi_pseudo_op=yes],
-		   [libffi_cv_as_cfi_pseudo_op=no])
-])
-if test "x$libffi_cv_as_cfi_pseudo_op" = xyes; then
-    AC_DEFINE(HAVE_AS_CFI_PSEUDO_OP, 1,
-	      [Define if your assembler supports .cfi_* directives.])
-fi
+GCC_AS_CFI_PSEUDO_OP
 
 if test x$TARGET = xSPARC; then
     AC_CACHE_CHECK([assembler and linker support unaligned pc related relocs],
@@ -291,7 +317,7 @@ if test x$TARGET = xX86 || test x$TARGET = xX86_WIN32 || test x$TARGET = xX86_64
        libffi_cv_as_ascii_pseudo_op, [
        libffi_cv_as_ascii_pseudo_op=unknown
        # Check if we have .ascii
-       AC_TRY_COMPILE([asm (".ascii \"string\"");],,
+       AC_TRY_COMPILE([asm (".ascii \\"string\\"");],,
 		       [libffi_cv_as_ascii_pseudo_op=yes],
 		       [libffi_cv_as_ascii_pseudo_op=no])
     ])
@@ -304,7 +330,7 @@ if test x$TARGET = xX86 || test x$TARGET = xX86_WIN32 || test x$TARGET = xX86_64
        libffi_cv_as_string_pseudo_op, [
        libffi_cv_as_string_pseudo_op=unknown
        # Check if we have .string
-       AC_TRY_COMPILE([asm (".string \"string\"");],,
+       AC_TRY_COMPILE([asm (".string \\"string\\"");],,
 		       [libffi_cv_as_string_pseudo_op=yes],
 		       [libffi_cv_as_string_pseudo_op=no])
     ])
@@ -321,13 +347,23 @@ if test x$TARGET = xX86_WIN64; then
     fi
 fi
 
+
+FFI_EXEC_TRAMPOLINE_TABLE=0
 case "$target" in
-     *-apple-darwin10* | *-*-freebsd* | *-*-openbsd* | *-pc-solaris*)
+     *arm*-apple-darwin*)
+       FFI_EXEC_TRAMPOLINE_TABLE=1
+       AC_DEFINE(FFI_EXEC_TRAMPOLINE_TABLE, 1,
+                 [Cannot use PROT_EXEC on this target, so, we revert to
+                   alternative means])
+     ;;
+     *-apple-darwin1[[10]]* | *-*-freebsd* | *-*-kfreebsd* | *-*-openbsd* | *-pc-solaris*)
        AC_DEFINE(FFI_MMAP_EXEC_WRIT, 1,
                  [Cannot use malloc on this target, so, we revert to
                    alternative means])
      ;;
 esac
+AM_CONDITIONAL(FFI_EXEC_TRAMPOLINE_TABLE, test x$FFI_EXEC_TRAMPOLINE_TABLE = x1)
+AC_SUBST(FFI_EXEC_TRAMPOLINE_TABLE)
 
 if test x$TARGET = xX86_64; then
     AC_CACHE_CHECK([assembler supports unwind section type],
@@ -344,44 +380,46 @@ if test x$TARGET = xX86_64; then
     fi
 fi
 
-AC_CACHE_CHECK([whether .eh_frame section should be read-only],
-    libffi_cv_ro_eh_frame, [
-	libffi_cv_ro_eh_frame=no
-	echo 'extern void foo (void); void bar (void) { foo (); foo (); }' > conftest.c
-	if $CC $CFLAGS -S -fpic -fexceptions -o conftest.s conftest.c > /dev/null 2>&1; then
-	    if grep '.section.*eh_frame.*"a"' conftest.s > /dev/null; then
-		libffi_cv_ro_eh_frame=yes
-	    elif grep '.section.*eh_frame.*#alloc' conftest.c \
-		 | grep -v '#write' > /dev/null; then
-		libffi_cv_ro_eh_frame=yes
-	    fi
-	fi
-	rm -f conftest.*
-    ])
-if test "x$libffi_cv_ro_eh_frame" = xyes; then
-    AC_DEFINE(HAVE_RO_EH_FRAME, 1,
-	      [Define if .eh_frame sections should be read-only.])
-    AC_DEFINE(EH_FRAME_FLAGS, "a",
-	      [Define to the flags needed for the .section .eh_frame directive.])
-else
-    AC_DEFINE(EH_FRAME_FLAGS, "aw",
-	      [Define to the flags needed for the .section .eh_frame directive.])
-fi
+if test "x$GCC" = "xyes"; then
+  AC_CACHE_CHECK([whether .eh_frame section should be read-only],
+      libffi_cv_ro_eh_frame, [
+  	libffi_cv_ro_eh_frame=no
+  	echo 'extern void foo (void); void bar (void) { foo (); foo (); }' > conftest.c
+  	if $CC $CFLAGS -S -fpic -fexceptions -o conftest.s conftest.c > /dev/null 2>&1; then
+  	    if grep '.section.*eh_frame.*"a"' conftest.s > /dev/null; then
+  		libffi_cv_ro_eh_frame=yes
+  	    elif grep '.section.*eh_frame.*#alloc' conftest.c \
+  		 | grep -v '#write' > /dev/null; then
+  		libffi_cv_ro_eh_frame=yes
+  	    fi
+  	fi
+  	rm -f conftest.*
+      ])
+  if test "x$libffi_cv_ro_eh_frame" = xyes; then
+      AC_DEFINE(HAVE_RO_EH_FRAME, 1,
+  	      [Define if .eh_frame sections should be read-only.])
+      AC_DEFINE(EH_FRAME_FLAGS, "a",
+  	      [Define to the flags needed for the .section .eh_frame directive.  ])
+  else
+      AC_DEFINE(EH_FRAME_FLAGS, "aw",
+  	      [Define to the flags needed for the .section .eh_frame directive.  ])
+  fi
 
-AC_CACHE_CHECK([for __attribute__((visibility("hidden")))],
-    libffi_cv_hidden_visibility_attribute, [
-	echo 'int __attribute__ ((visibility ("hidden"))) foo (void) { return 1; }' > conftest.c
-	libffi_cv_hidden_visibility_attribute=no
-	if AC_TRY_COMMAND(${CC-cc} -Werror -S conftest.c -o conftest.s 1>&AS_MESSAGE_LOG_FD); then
-	    if grep '\.hidden.*foo' conftest.s >/dev/null; then
-		libffi_cv_hidden_visibility_attribute=yes
-	    fi
-	fi
-	rm -f conftest.*
-    ])
-if test $libffi_cv_hidden_visibility_attribute = yes; then
-    AC_DEFINE(HAVE_HIDDEN_VISIBILITY_ATTRIBUTE, 1,
-	      [Define if __attribute__((visibility("hidden"))) is supported.])
+  AC_CACHE_CHECK([for __attribute__((visibility("hidden")))],
+      libffi_cv_hidden_visibility_attribute, [
+  	echo 'int __attribute__ ((visibility ("hidden"))) foo (void) { return 1  ; }' > conftest.c
+  	libffi_cv_hidden_visibility_attribute=no
+  	if AC_TRY_COMMAND(${CC-cc} -Werror -S conftest.c -o conftest.s 1>&AS_MESSAGE_LOG_FD); then
+  	    if grep '\.hidden.*foo' conftest.s >/dev/null; then
+  		libffi_cv_hidden_visibility_attribute=yes
+  	    fi
+  	fi
+  	rm -f conftest.*
+      ])
+  if test $libffi_cv_hidden_visibility_attribute = yes; then
+      AC_DEFINE(HAVE_HIDDEN_VISIBILITY_ATTRIBUTE, 1,
+  	      [Define if __attribute__((visibility("hidden"))) is supported.])
+  fi
 fi
 
 AH_BOTTOM([
@@ -430,21 +468,25 @@ AC_ARG_ENABLE(purify-safety,
     AC_DEFINE(USING_PURIFY, 1, [Define this if you are using Purify and want to suppress spurious messages.])
   fi)
 
-if test -n "$with_cross_host" &&
-   test x"$with_cross_host" != x"no"; then
-  toolexecdir='$(exec_prefix)/$(target_alias)'
-  toolexeclibdir='$(toolexecdir)/lib'
-else
-  toolexecdir='$(libdir)/gcc-lib/$(target_alias)'
-  toolexeclibdir='$(libdir)'
+# These variables are only ever used when we cross-build to X86_WIN32.
+# And we only support this with GCC, so...
+if test x"$GCC" != x"no"; then
+  if test -n "$with_cross_host" &&
+     test x"$with_cross_host" != x"no"; then
+    toolexecdir='$(exec_prefix)/$(target_alias)'
+    toolexeclibdir='$(toolexecdir)/lib'
+  else
+    toolexecdir='$(libdir)/gcc-lib/$(target_alias)'
+    toolexeclibdir='$(libdir)'
+  fi
+  multi_os_directory=`$CC -print-multi-os-directory`
+  case $multi_os_directory in
+    .) ;; # Avoid trailing /.
+    *) toolexeclibdir=$toolexeclibdir/$multi_os_directory ;;
+  esac
+  AC_SUBST(toolexecdir)
+  AC_SUBST(toolexeclibdir)
 fi
-multi_os_directory=`$CC -print-multi-os-directory`
-case $multi_os_directory in
-  .) ;; # Avoid trailing /.
-  *) toolexeclibdir=$toolexeclibdir/$multi_os_directory ;;
-esac
-AC_SUBST(toolexecdir)
-AC_SUBST(toolexeclibdir)
 
 if test "${multilib}" = "yes"; then
   multilib_arg="--enable-multilib"
@@ -460,6 +502,6 @@ test -d src/$TARGETDIR || mkdir src/$TARGETDIR
 
 AC_CONFIG_LINKS(include/ffitarget.h:src/$TARGETDIR/ffitarget.h)
 
-AC_CONFIG_FILES(include/Makefile include/ffi.h Makefile man/Makefile libffi.pc)
+AC_CONFIG_FILES(include/Makefile include/ffi.h Makefile testsuite/Makefile man/Makefile libffi.pc)
 
 AC_OUTPUT
