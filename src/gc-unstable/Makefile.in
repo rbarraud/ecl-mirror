@@ -105,11 +105,12 @@ check_PROGRAMS = gctest$(EXEEXT) leaktest$(EXEEXT) middletest$(EXEEXT) \
 @PTHREADS_TRUE@am__append_2 = pthread_start.c pthread_support.c pthread_stop_world.c
 @DARWIN_THREADS_TRUE@am__append_3 = darwin_stop_world.c
 @WIN32_THREADS_TRUE@am__append_4 = win32_threads.c
+@NEED_SIGSETJMP_ASM_TRUE@am__append_5 = sigsetjmp_x86.S
 
 # C++ Interface
 # -------------
-@CPLUSPLUS_TRUE@am__append_5 = libgccpp.la
-@CPLUSPLUS_TRUE@am__append_6 = include/gc_cpp.h include/gc_allocator.h
+@CPLUSPLUS_TRUE@am__append_6 = libgccpp.la
+@CPLUSPLUS_TRUE@am__append_7 = include/gc_cpp.h include/gc_allocator.h
 DIST_COMMON = $(am__configure_deps) $(am__pkginclude_HEADERS_DIST) \
 	$(dist_noinst_HEADERS) $(dist_noinst_SCRIPTS) \
 	$(dist_pkgdata_DATA) $(include_HEADERS) $(srcdir)/Makefile.am \
@@ -120,15 +121,15 @@ DIST_COMMON = $(am__configure_deps) $(am__pkginclude_HEADERS_DIST) \
 	$(top_srcdir)/include/private/config.h.in ChangeLog compile \
 	config.guess config.sub depcomp install-sh ltmain.sh missing \
 	mkinstalldirs
-@KEEP_BACK_PTRS_TRUE@am__append_7 = tracetest$(EXEEXT)
-@KEEP_BACK_PTRS_TRUE@am__append_8 = tracetest
-@THREADS_TRUE@am__append_9 = threadleaktest$(EXEEXT) \
+@KEEP_BACK_PTRS_TRUE@am__append_8 = tracetest$(EXEEXT)
+@KEEP_BACK_PTRS_TRUE@am__append_9 = tracetest
+@THREADS_TRUE@am__append_10 = threadleaktest$(EXEEXT) \
 @THREADS_TRUE@	threadkey_test$(EXEEXT) \
 @THREADS_TRUE@	initsecondarythread$(EXEEXT)
-@THREADS_TRUE@am__append_10 = threadleaktest threadkey_test \
+@THREADS_TRUE@am__append_11 = threadleaktest threadkey_test \
 @THREADS_TRUE@	initsecondarythread
-@CPLUSPLUS_TRUE@am__append_11 = test_cpp$(EXEEXT)
-@CPLUSPLUS_TRUE@am__append_12 = test_cpp
+@CPLUSPLUS_TRUE@am__append_12 = test_cpp$(EXEEXT)
+@CPLUSPLUS_TRUE@am__append_13 = test_cpp
 subdir = .
 ACLOCAL_M4 = $(top_srcdir)/aclocal.m4
 am__aclocal_m4_deps = $(top_srcdir)/m4/gc_set_version.m4 \
@@ -183,18 +184,19 @@ am__libgc_la_SOURCES_DIST = allchblk.c alloc.c blacklst.c checksums.c \
 	real_malloc.c reclaim.c specific.c stubborn.c typd_mlc.c \
 	backgraph.c thread_local_alloc.c pthread_start.c \
 	pthread_support.c pthread_stop_world.c darwin_stop_world.c \
-	win32_threads.c
+	win32_threads.c sigsetjmp_x86.S
 @PTHREADS_TRUE@am__objects_1 = pthread_start.lo pthread_support.lo \
 @PTHREADS_TRUE@	pthread_stop_world.lo
 @DARWIN_THREADS_TRUE@am__objects_2 = darwin_stop_world.lo
 @WIN32_THREADS_TRUE@am__objects_3 = win32_threads.lo
+@NEED_SIGSETJMP_ASM_TRUE@am__objects_4 = sigsetjmp_x86.lo
 am_libgc_la_OBJECTS = allchblk.lo alloc.lo blacklst.lo checksums.lo \
 	dbg_mlc.lo dyn_load.lo finalize.lo gc_dlopen.lo gcj_mlc.lo \
 	headers.lo malloc.lo mallocx.lo mark.lo mark_rts.lo misc.lo \
 	new_hblk.lo obj_map.lo os_dep.lo pcr_interface.lo ptr_chck.lo \
 	real_malloc.lo reclaim.lo specific.lo stubborn.lo typd_mlc.lo \
 	backgraph.lo thread_local_alloc.lo $(am__objects_1) \
-	$(am__objects_2) $(am__objects_3)
+	$(am__objects_2) $(am__objects_3) $(am__objects_4)
 @NEED_ATOMIC_OPS_ASM_FALSE@@USE_INTERNAL_LIBATOMIC_OPS_TRUE@nodist_libgc_la_OBJECTS = atomic_ops.lo
 @NEED_ATOMIC_OPS_ASM_TRUE@nodist_libgc_la_OBJECTS =  \
 @NEED_ATOMIC_OPS_ASM_TRUE@	atomic_ops_sysdeps.lo
@@ -577,14 +579,14 @@ EXTRA_DIST = gc_cpp.cpp README.QUICK BCC_MAKEFILE NT_MAKEFILE \
 
 # C Library
 # ---------
-lib_LTLIBRARIES = libgc.la $(am__append_5) libcord.la
+lib_LTLIBRARIES = libgc.la $(am__append_6) libcord.la
 
 # unprefixed header
 include_HEADERS = include/extra/gc.h include/extra/gc_cpp.h
 
 # installed headers
 #
-pkginclude_HEADERS = $(am__append_6) include/gc.h include/gc_typed.h \
+pkginclude_HEADERS = $(am__append_7) include/gc.h include/gc_typed.h \
 	include/gc_inline.h include/gc_mark.h include/gc_cpp.h \
 	include/weakpointer.h include/new_gc_alloc.h \
 	include/gc_allocator.h include/gc_backptr.h include/gc_gcj.h \
@@ -607,8 +609,8 @@ dist_noinst_HEADERS = include/private/gc_hdrs.h \
 check_LTLIBRARIES = libstaticrootslib.la
 TESTS = gctest$(EXEEXT) leaktest$(EXEEXT) middletest$(EXEEXT) \
 	smashtest$(EXEEXT) hugetest$(EXEEXT) realloc_test$(EXEEXT) \
-	staticrootstest$(EXEEXT) $(am__append_7) $(am__append_9) \
-	$(am__append_11)
+	staticrootstest$(EXEEXT) $(am__append_8) $(am__append_10) \
+	$(am__append_12)
 pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = bdw-gc.pc
 libgc_la_SOURCES = allchblk.c alloc.c blacklst.c checksums.c dbg_mlc.c \
@@ -617,7 +619,7 @@ libgc_la_SOURCES = allchblk.c alloc.c blacklst.c checksums.c dbg_mlc.c \
 	os_dep.c pcr_interface.c ptr_chck.c real_malloc.c reclaim.c \
 	specific.c stubborn.c typd_mlc.c backgraph.c \
 	thread_local_alloc.c $(am__append_2) $(am__append_3) \
-	$(am__append_4)
+	$(am__append_4) $(am__append_5)
 @NEED_ATOMIC_OPS_ASM_TRUE@nodist_libgc_la_SOURCES = libatomic_ops/src/atomic_ops_sysdeps.S
 @USE_INTERNAL_LIBATOMIC_OPS_TRUE@nodist_libgc_la_SOURCES = libatomic_ops/src/atomic_ops.c
 
@@ -933,6 +935,7 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/real_malloc.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/realloc_test.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/reclaim.Plo@am__quote@
+@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/sigsetjmp_x86.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/smash_test.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/sparc_mach_dep.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/specific.Plo@am__quote@

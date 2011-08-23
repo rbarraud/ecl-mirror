@@ -126,6 +126,10 @@ case "$THREADS" in
         AC_DEFINE(GC_LINUX_THREADS)
         AC_DEFINE(_REENTRANT)
         ;;
+     *-*-eabi*)
+        AC_DEFINE(GC_LINUX_THREADS)
+        AC_DEFINE(_REENTRANT)
+        ;;
      *-*-aix*)
         AC_DEFINE(GC_AIX_THREADS)
         AC_DEFINE(_REENTRANT)
@@ -677,6 +681,45 @@ if test "${enable_munmap}" != ""; then
 fi
 
 AM_CONDITIONAL(USE_LIBDIR, test -z "$with_cross_host")
+
+
+dnl Checks if sigsetjmp() is available
+dnl Defines HAVE_SIGSETJMP on success.
+AC_DEFUN([AC_FUNC_SIGSETJMP],
+[AC_CACHE_CHECK([for sigsetjmp], ac_cv_func_sigsetjmp,
+                [AC_TRY_LINK([
+#include <setjmp.h>],
+		[
+sigjmp_buf jb;
+sigsetjmp(jb, 1);],
+                [ac_cv_func_sigsetjmp=yes],
+                [ac_cv_func_sigsetjmp=no])])
+if test $ac_cv_func_sigsetjmp = yes; then
+  AC_DEFINE(HAVE_SIGSETJMP)
+fi])
+
+dnl Checks if siglongjmp() is available
+dnl Defines HAVE_SIGLONGJMP on success.
+AC_DEFUN([AC_FUNC_SIGLONGJMP],
+[AC_CACHE_CHECK([for siglongjmp], ac_cv_func_siglongjmp,
+                [AC_TRY_LINK([
+#include <setjmp.h>],
+		[
+sigjmp_buf jb;
+sigsetjmp(jb, 1);
+siglongjmp(jb, 1);],
+                [ac_cv_func_siglongjmp=yes],
+                [ac_cv_func_siglongjmp=no])])
+if test $ac_cv_func_siglongjmp = yes; then
+  AC_DEFINE(HAVE_SIGLONGJMP)
+fi])
+
+
+AC_FUNC_SIGSETJMP
+AC_FUNC_SIGLONGJMP
+
+AM_CONDITIONAL([NEED_SIGSETJMP_ASM],
+    [test x$ac_cv_func_sigsetjmp = xno])
 
 
 # Atomic Ops

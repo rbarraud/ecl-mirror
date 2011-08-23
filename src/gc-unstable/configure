@@ -624,6 +624,8 @@ USE_INTERNAL_LIBATOMIC_OPS_FALSE
 USE_INTERNAL_LIBATOMIC_OPS_TRUE
 subdirs
 ATOMIC_OPS_LIBS
+NEED_SIGSETJMP_ASM_FALSE
+NEED_SIGSETJMP_ASM_TRUE
 USE_LIBDIR_FALSE
 USE_LIBDIR_TRUE
 UNWINDLIBS
@@ -5079,6 +5081,12 @@ fi
 $as_echo "$as_me: WARNING: \"Explicit GC_INIT() calls may be required.\"" >&2;};
         ;;
      *-*-linux*)
+        $as_echo "#define GC_LINUX_THREADS 1" >>confdefs.h
+
+        $as_echo "#define _REENTRANT 1" >>confdefs.h
+
+        ;;
+     *-*-eabi*)
         $as_echo "#define GC_LINUX_THREADS 1" >>confdefs.h
 
         $as_echo "#define _REENTRANT 1" >>confdefs.h
@@ -16573,6 +16581,89 @@ fi
 
 
 
+
+
+
+
+
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for sigsetjmp" >&5
+$as_echo_n "checking for sigsetjmp... " >&6; }
+if ${ac_cv_func_sigsetjmp+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+#include <setjmp.h>
+int
+main ()
+{
+
+sigjmp_buf jb;
+sigsetjmp(jb, 1);
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_func_sigsetjmp=yes
+else
+  ac_cv_func_sigsetjmp=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_func_sigsetjmp" >&5
+$as_echo "$ac_cv_func_sigsetjmp" >&6; }
+if test $ac_cv_func_sigsetjmp = yes; then
+  $as_echo "#define HAVE_SIGSETJMP 1" >>confdefs.h
+
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for siglongjmp" >&5
+$as_echo_n "checking for siglongjmp... " >&6; }
+if ${ac_cv_func_siglongjmp+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+#include <setjmp.h>
+int
+main ()
+{
+
+sigjmp_buf jb;
+sigsetjmp(jb, 1);
+siglongjmp(jb, 1);
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_func_siglongjmp=yes
+else
+  ac_cv_func_siglongjmp=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_func_siglongjmp" >&5
+$as_echo "$ac_cv_func_siglongjmp" >&6; }
+if test $ac_cv_func_siglongjmp = yes; then
+  $as_echo "#define HAVE_SIGLONGJMP 1" >>confdefs.h
+
+fi
+
+ if test x$ac_cv_func_sigsetjmp = xno; then
+  NEED_SIGSETJMP_ASM_TRUE=
+  NEED_SIGSETJMP_ASM_FALSE='#'
+else
+  NEED_SIGSETJMP_ASM_TRUE='#'
+  NEED_SIGSETJMP_ASM_FALSE=
+fi
+
+
+
 # Atomic Ops
 # ----------
 
@@ -16823,6 +16914,10 @@ Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${USE_LIBDIR_TRUE}" && test -z "${USE_LIBDIR_FALSE}"; then
   as_fn_error $? "conditional \"USE_LIBDIR\" was never defined.
+Usually this means the macro was only invoked conditionally." "$LINENO" 5
+fi
+if test -z "${NEED_SIGSETJMP_ASM_TRUE}" && test -z "${NEED_SIGSETJMP_ASM_FALSE}"; then
+  as_fn_error $? "conditional \"NEED_SIGSETJMP_ASM\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${USE_INTERNAL_LIBATOMIC_OPS_TRUE}" && test -z "${USE_INTERNAL_LIBATOMIC_OPS_FALSE}"; then

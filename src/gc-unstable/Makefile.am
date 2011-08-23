@@ -87,6 +87,11 @@ if NEED_ATOMIC_OPS_ASM
 nodist_libgc_la_SOURCES = libatomic_ops/src/atomic_ops_sysdeps.S
 endif
 
+if NEED_SIGSETJMP_ASM
+libgc_la_SOURCES += sigsetjmp_x86.S
+endif
+
+
 # Include THREADDLLIBS here to ensure that the correct versions of
 # linuxthread semaphore functions get linked:
 libgc_la_LIBADD = @addobjs@ $(THREADDLLIBS) $(UNWINDLIBS) $(ATOMIC_OPS_LIBS)
