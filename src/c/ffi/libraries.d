@@ -34,17 +34,17 @@
 #  undef HAVE_MACH_O_DYLD_H
 # endif
 #endif
-#ifdef HAVE_DLFCN_H
+#if defined(HAVE_DLFCN_H) || defined(ENABLE_LTDL)
 # ifdef HAVE_MACH_O_DYLD_H
 #  undef HAVE_MACH_O_DYLD_H
 # endif
 #endif
-#ifdef ENABLE_DLOPEN
+#if defined(ENABLE_DLOPEN) && !defined(ENABLE_LTDL)
 # ifdef cygwin
 #  include <w32api/windows.h>
 #  include <sys/stat.h>
 # endif
-# ifdef HAVE_DLFCN_H
+# if defined(HAVE_DLFCN_H) || defined(ENABLE_LTDL)
 #  include <dlfcn.h>
 #  define INIT_PREFIX "init_fas_"
 #  ifdef bool
@@ -67,6 +67,9 @@
 # else
 #  include <unistd.h>
 # endif
+#elif defined(ENABLE_LTDL)
+#  define INIT_PREFIX "init_fas_"
+#  include <ltdl.h>
 #endif /* ENABLE_DLOPEN */
 #include <ecl/ecl-inl.h>
 #include <ecl/internal.h>
@@ -150,8 +153,10 @@ static void
 set_library_error(cl_object block) {
 	cl_object output;
 	ecl_disable_interrupts();
-#ifdef HAVE_DLFCN_H
+#if defined(HAVE_DLFCN_H) && !defined(ENABLE_LTDL)
 	output = make_base_string_copy(dlerror());
+#else if defined(ENABLE_LDTD)
+	output = make_base_string_copy(lt_dlerror());
 #endif
 #ifdef HAVE_MACH_O_DYLD_H
 	{
@@ -181,8 +186,10 @@ dlopen_wrapper(cl_object block)
 {
 	cl_object filename = block->cblock.name;
         char *filename_string = (char*)filename->base_string.self;
-#ifdef HAVE_DLFCN_H
+#if defined(HAVE_DLFCN_H) && !defined(ENABLE_LTDL)
 	block->cblock.handle = dlopen(filename_string, RTLD_NOW|RTLD_GLOBAL);
+#else if defined(ENABLE_LTDL)
+	block->cblock.handle = lt_dlopen(filename_string);
 #endif
 #ifdef HAVE_MACH_O_DYLD_H
 	{
@@ -210,8 +217,10 @@ static void
 dlclose_wrapper(cl_object block)
 {
         if (block->cblock.handle != NULL) {
-#ifdef HAVE_DLFCN_H
+#if defined(HAVE_DLFCN_H) && !defined(ENABLE_LTDL)
                 dlclose(block->cblock.handle);
+#else if defined(ENABLE_LTDL)
+                lt_dlclose(block->cblock.handle);
 #endif
 #ifdef HAVE_MACH_O_DYLD_H
                 NSUnLinkModule(block->cblock.handle, NSUNLINKMODULE_OPTION_NONE);
@@ -288,11 +297,13 @@ ecl_library_open(cl_object filename, bool force_reload) {
 	bool self_destruct = 0;
 	char *filename_string;
 
+#ifndef ENABLE_LTDL
 	/* Coerces to a file name but does not merge with cwd */
 	filename = coerce_to_physical_pathname(filename);
         filename = ecl_namestring(filename,
                                   ECL_NAMESTRING_TRUNCATE_IF_ERROR |
                                   ECL_NAMESTRING_FORCE_BASE_STRING);
+#endif
 
 	if (!force_reload) {
 		/* When loading a foreign library, such as a dll or a
@@ -374,8 +385,10 @@ ecl_library_symbol(cl_object block, const char *symbol, bool lock) {
 		p = (void*)hnd;
 		}
 #endif
-#ifdef HAVE_DLFCN_H
+#if defined(HAVE_DLFCN_H) && !defined(ENABLE_LTDL)
 		p = dlsym(0, symbol);
+#else if defined(ENABLE_LTDL)
+		p = lt_dlsym(0, symbol);
 #endif
 #if !defined(ECL_MS_WINDOWS_HOST) && !defined(HAVE_DLFCN_H)
 		p = 0;
@@ -383,8 +396,10 @@ ecl_library_symbol(cl_object block, const char *symbol, bool lock) {
 		ecl_enable_interrupts();
 	} else {
 		ecl_disable_interrupts();
-#ifdef HAVE_DLFCN_H
+#if defined(HAVE_DLFCN_H) && !defined(ENABLE_LTDL)
 		p = dlsym(block->cblock.handle, symbol);
+#else if defined(ENABLE_LTDL)
+		p = lt_dlsym(block->cblock.handle, symbol);
 #endif
 #if defined(ECL_MS_WINDOWS_HOST)
 		{

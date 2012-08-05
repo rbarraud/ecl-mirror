@@ -35,8 +35,11 @@ ecl_def_string_array(feature_names,static,const) = {
 #ifdef CLOS
 	ecl_def_string_array_elt("CLOS"),
 #endif
-#ifdef ENABLE_DLOPEN
+#if defined(ENABLE_DLOPEN) && !defined(ENABLE_LTDL)
 	ecl_def_string_array_elt("DLOPEN"),
+#endif
+#if defined(ENABLE_LTDL)
+	ecl_def_string_array_elt("ECL-DLPREOPEN"),
 #endif
 #ifdef ECL_OLD_LOOP
 	ecl_def_string_array_elt("OLD-LOOP"),

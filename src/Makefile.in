@@ -138,6 +138,11 @@ bin/ecl-config: bin/ecl-config.pre
 	  cd .. && mv include/gmp.h ecl/ && rmdir include &&  \
 	  mv ./@LIBPREFIX@gmp.@LIBEXT@ ./@LIBPREFIX@eclgmp.@LIBEXT@; \
 	fi
+@LIBPREFIX@ltdl.@LIBEXT@:
+	if (echo $(SUBDIRS) | grep ltdl); then \
+	  cd libltdl && $(MAKE) && \
+	  mv ./.libs/@LIBPREFIX@ltdl.@LIBEXT@ ../@LIBPREFIX@ltdl.@LIBEXT@; \
+	fi
 
 rt.lisp:
 	cp $(srcdir)/../contrib/rt/rt.lisp ./
@@ -197,6 +202,9 @@ install:
 	    *) $(INSTALL_DATA) $$i $(DESTDIR)$(ecldir);; \
 	  esac \
 	done
+	if (echo $(SUBDIRS) | grep ltdl); then \
+	  (cd libltdl && $(MAKE) install-includeHEADERS install-ltdlincludeHEADERS) \
+	fi
 	for i in Copyright LGPL; do \
 	  $(INSTALL_DATA) $(top_srcdir)/../$$i $(DESTDIR)$(ecldir); \
 	done

@@ -286,6 +286,10 @@ typedef unsigned char ecl_base_char;
 /* Allow loading dynamically linked code				*/
 #undef ENABLE_DLOPEN
 
+/* Use libltdl                            				*/
+#undef ENABLE_LTDL
+
+
 /* Undefine this if you do not want ECL to check for circular lists	*/
 #define ECL_SAFE
 
